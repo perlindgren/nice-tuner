@@ -220,6 +220,7 @@ impl WindowHandler for TunerWindow {
                         };
                         engine.embedded.scroll(dx, dy);
                     }
+                    M::CursorLeft => engine.embedded.cursor_left(),
                     _ => {}
                 },
                 B::Window(W::Focused) => engine.embedded.set_focused(true),
