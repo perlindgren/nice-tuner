@@ -90,6 +90,18 @@ This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
 - [x] M5 DSP→GUI wiring (analysis gated on editor open; shared atomics, zero RT allocs)
 - [x] M6 `scripts/check.sh` all gates green, incl. `Nice Tuner.clap`/`.vst3` bundling
 
+## Upstream improvements we're tracking
+
+- **Device-preferred buffer size in standalone** — nice-plug always opens
+  streams at an explicit `--period-size` (default 512) and *errors* on devices
+  whose supported buffer range excludes it, instead of falling back to the
+  device's preferred size (cpal's `BufferSize::Default` exists and would do
+  exactly that). Upstream issue:
+  [RustAudio/nice-plug#93](https://codeberg.org/RustAudio/nice-plug/issues/93)
+  (open, `good first issue`). Workaround here: the buffer size is explicit on
+  the command line (`-p`), which is what the tuner wants anyway; revisit this
+  note if the issue lands upstream.
+
 ## Development
 
 Full gate (fmt, clippy `-D warnings`, tests, linker, bundling): `bash scripts/check.sh`.
