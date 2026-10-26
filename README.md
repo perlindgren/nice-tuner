@@ -42,6 +42,11 @@ cargo run --features standalone      # standalone app for testing without a DAW
 # ASIO is duplex, so omitting --output-device plays back on the same box.
 cargo build --features standalone-asio --bin nice-tuner-standalone
 target/debug/nice-tuner-standalone --backend asio --input-device "Komplete Input 1/2"
+
+# The default `--backend auto` tries JACK FIRST on every platform (nice-plug
+# upstream). If a libjack64.dll sits on PATH (Bitwig Studio ships one), you get
+# scary but harmless "cannot connect to named pipe server_jack_default_0" noise
+# before it falls back to WASAPI. Pin the backend to skip the probe entirely.
 ```
 
 ### Producing plugin binaries
