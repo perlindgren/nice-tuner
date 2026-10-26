@@ -849,18 +849,7 @@ impl TunerUi {
         };
         // Raw value of the default row ("" when unknowable: the row
         // still exists — "\u{2014} *" — and still means follow).
-        let def_raw = match dd {
-            Dropdown::Backend => "auto".to_owned(),
-            Dropdown::Input => self.default_in.clone().unwrap_or_default(),
-            Dropdown::Output => self.default_out.clone().unwrap_or_default(),
-            Dropdown::Rate => self.driver_rate.map(|r| r.to_string()).unwrap_or_default(),
-            Dropdown::Buffer => self.buffer_default().to_string(),
-            Dropdown::InputCh => "1".to_owned(),
-            Dropdown::A4 => "440".to_owned(),
-            Dropdown::Gate => "-60".to_owned(),
-            Dropdown::InTune => format!("{IN_TUNE_CENTS:.0}"),
-            Dropdown::GaugeCurve => format!("{GAUGE_KNEE_CENTS:.0}"),
-        };
+        let def_raw = self.default_raw(dd);
         let head = match self.default_label(dd) {
             Some(d) => format!("{d} *"),
             None => "\u{2014} *".to_string(),
@@ -881,11 +870,26 @@ impl TunerUi {
             .collect()
     }
 
-    /// The row carrying the current truth: row 0 while the setting is
-    /// unset (or set to exactly the default), else the matching option,
-    /// else row 0 again (unknown value = shown as following default).
-    fn selected_index(&self, dd: Dropdown) -> usize {
-        let current: String = match dd {
+    /// The raw value the default row selects ("" = unknowable default).
+    fn default_raw(&self, dd: Dropdown) -> String {
+        match dd {
+            Dropdown::Backend => "auto".to_owned(),
+            Dropdown::Input => self.default_in.clone().unwrap_or_default(),
+            Dropdown::Output => self.default_out.clone().unwrap_or_default(),
+            Dropdown::Rate => self.driver_rate.map(|r| r.to_string()).unwrap_or_default(),
+            Dropdown::Buffer => self.buffer_default().to_string(),
+            Dropdown::InputCh => "1".to_owned(),
+            Dropdown::A4 => "440".to_owned(),
+            Dropdown::Gate => "-60".to_owned(),
+            Dropdown::InTune => format!("{IN_TUNE_CENTS:.0}"),
+            Dropdown::GaugeCurve => format!("{GAUGE_KNEE_CENTS:.0}"),
+        }
+    }
+
+    /// The raw value the row shows right now (unset settings resolve to
+    /// their default — that IS the current truth).
+    fn current_raw(&self, dd: Dropdown) -> String {
+        match dd {
             Dropdown::Backend => self
                 .settings
                 .backend
@@ -928,12 +932,26 @@ impl TunerUi {
                 "{:.0}",
                 self.settings.gauge_knee_cents.unwrap_or(GAUGE_KNEE_CENTS)
             ),
-        };
+        }
+    }
+
+    /// The row carrying the current truth: row 0 while the setting is
+    /// unset (or set to exactly the default), else the matching option,
+    /// else row 0 again (unknown value = shown as following default).
+    fn selected_index(&self, dd: Dropdown) -> usize {
+        let current = self.current_raw(dd);
         self.dropdown_rows(dd)
             .0
             .iter()
             .position(|(_, raw)| *raw == current)
             .unwrap_or(0)
+    }
+
+    /// True when the row's value IS the default — the star behind the
+    /// value button, matching the starred default row in its dropdown.
+    fn is_default(&self, dd: Dropdown) -> bool {
+        let current = self.current_raw(dd);
+        current.is_empty() || current == self.default_raw(dd)
     }
 
     fn pick(&mut self, dd: Dropdown, idx: usize) {
@@ -1057,7 +1075,18 @@ impl TunerUi {
         }
     }
 
+    /// The closed dropdown's text: the current value, starred with `*`
+    /// when it IS the default — so a glance says what would happen on
+    /// RESET, and the star matches the dropdown's starred row.
     fn current_value_label(&self, dd: Dropdown) -> String {
+        let mut s = self.value_text(dd);
+        if self.is_default(dd) && !s.ends_with('*') {
+            s.push('*');
+        }
+        s
+    }
+
+    fn value_text(&self, dd: Dropdown) -> String {
         match dd {
             Dropdown::Backend => self
                 .backend_opts
