@@ -10,7 +10,7 @@
 //!        ▲              needle line at x = smoothed cents·2.4
 //!       +4.1¢            cents, size 28, y −5
 //!   440.0 Hz · A4=440    freq + ref, size 22 dim, y −45
-//!   ▂▃▅ level ▅▃▂        rms meter, y −95, halfwidth ≤ 160
+//!   ▂▃▅ level ▅▃▂        dBFS meter, y −150, halfwidth 240 (0 to −48 dB)
 //! ```
 
 use crate::TunerSharedState;
@@ -54,7 +54,7 @@ const MENU_BG: Color = rgb(0x0d, 0x0a, 0x16);
 const HOVER: Color = rgb(0x3a, 0x33, 0x4f);
 const FG: Color = rgb(0xe6, 0xe6, 0xea);
 
-/// Static chrome: background, gauge tick marks, meter track. Rebuilt never;
+/// Static chrome: background and gauge tick marks. Rebuilt never;
 /// everything that moves is drawn immediately in [`TunerUi::process`].
 pub fn static_scene() -> Scene {
     let mut ticks = Vec::new();
@@ -64,27 +64,16 @@ pub fn static_scene() -> Scene {
         let half = if long { 9.0 } else { 4.5 };
         ticks.push(Box::new(SceneNode {
             shape: Some(Shape::Rectangle {
-                center: [x, 25.0],
+                center: [x, -2.0], // on the needle band (moved from 25)
                 extent: [0.75, half],
                 color: if long { DIM } else { TRACK },
             }),
             ..Default::default()
         }));
     }
-    let meter_track = Box::new(SceneNode {
-        shape: Some(Shape::Rectangle {
-            center: [0.0, -95.0],
-            extent: [160.0, 3.0],
-            color: TRACK,
-        }),
-        ..Default::default()
-    });
     Scene::new(SceneNode {
         shape: Some(Shape::Background { color: BG }),
-        children: ticks
-            .into_iter()
-            .chain(std::iter::once(meter_track))
-            .collect(),
+        children: ticks.into_iter().collect(),
         ..Default::default()
     })
 }
@@ -96,6 +85,9 @@ pub struct TunerUi {
     // smoothed display state
     needle_cents: f32, // EMA'd cents shown on the gauge
     latch_midi: i16,   // -1 = nothing latched
+    /// Input level in dBFS for the meter, EMA-smoothed (fast attack, slow
+    /// release), computed continuously from the drained stream in `analyze`.
+    meter_db: f32,
     latch_name: &'static str,
     latch_oct: i8,
     cents_shown: f64,
@@ -146,6 +138,7 @@ impl TunerUi {
             font,
             needle_cents: 0.0,
             latch_midi: -1,
+            meter_db: -120.0,
             latch_name: "–",
             latch_oct: 0,
             cents_shown: 0.0,
@@ -201,11 +194,22 @@ impl TunerUi {
         }
         const CHUNK: usize = 4096;
         let mut buf = [0f32; CHUNK];
+        // Continuous input level for the dB meter: mean square over
+        // everything drained this frame, independent of detections (the
+        // detector's own rms only moves when a pitch is confident).
+        let mut ss: f64 = 0.0;
+        let mut n: usize = 0;
+        let mut drained = false;
         while rb.slots() > 0 {
             let want = rb.slots().min(CHUNK);
             if rb.pop_entire_slice(&mut buf[..want]).is_err() {
                 break;
             }
+            drained = true;
+            for &x in &buf[..want] {
+                ss += (x as f64) * (x as f64);
+            }
+            n += want;
             if let Some(d) = detector.push_samples(&buf[..want]) {
                 self.shared.freq_hz.store(d.freq_hz);
                 self.shared.clarity.store(d.clarity);
@@ -215,6 +219,24 @@ impl TunerUi {
                     .store(crate::now_epoch_ms(), Ordering::Relaxed);
             }
         }
+        // Always show the real input level: silent stream → -120, no
+        // samples at all (audio stopped) → also falls toward -120.
+        let target = if drained && n > 0 {
+            let rms = (ss / n as f64).sqrt();
+            if rms > 1e-7 {
+                (20.0 * rms.log10()) as f32
+            } else {
+                -120.0
+            }
+        } else {
+            -120.0
+        };
+        let k = if target > self.meter_db {
+            0.5 // fast attack
+        } else {
+            0.06 // slow release
+        };
+        self.meter_db += (target - self.meter_db) * k;
     }
 }
 
@@ -401,9 +423,41 @@ impl Process for TunerUi {
             format!("———  ·  A4={:.0}", a4)
         };
         ctx.text(0.0, -104.0 * fit, font, freq_s, 39.6 * fit, 550.0, DIM, 0.2);
-        // (meter bar removed per user feedback: drawn only while detections
-        // are fresh, it read as a stray divider line rather than a level
-        // meter — the needle and cents already carry the information)
+        // ---- input meter with a real dBFS scale ----------------------------
+        // 0 dBFS right, -48 left, ticks every 6 dB, as wide as the needle
+        // sweep. Driven by meter_db (continuous), so it shows input level
+        // always — silent room reads silence, no detection required.
+        {
+            let half = 240.0 * fit;
+            let y = -150.0 * fit;
+            ctx.rectangle(0.0, y, half, 2.5 * fit, Color { a: 0.5, ..TRACK }, 0.05);
+            for i in 0..=8u32 {
+                let xv = half - i as f32 * (half / 4.0);
+                ctx.rectangle(xv, y, 1.0 * fit, 7.0 * fit, Color { a: 0.6, ..DIM }, 0.06);
+                ctx.text(
+                    xv,
+                    y - 16.0 * fit,
+                    font,
+                    format!("{}", -(6 * i as i32)),
+                    14.0 * fit,
+                    550.0,
+                    DIM,
+                    0.06,
+                );
+            }
+            let m = self.meter_db.clamp(-48.0, 0.0);
+            let xv = half * (1.0 + m / 24.0);
+            if xv > -half + 0.5 {
+                ctx.rectangle(
+                    (-half + xv) / 2.0,
+                    y,
+                    (xv + half) / 2.0,
+                    2.5 * fit,
+                    Color { a: 0.85, ..AMBER },
+                    0.07,
+                );
+            }
+        }
     }
 }
 
