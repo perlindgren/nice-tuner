@@ -343,7 +343,7 @@ impl PitchDetector {
         let mut tau = lag_min;
         while tau <= lag_max {
             if cmnd[tau] < CMND_THRESHOLD {
-                while tau + 1 <= lag_max && cmnd[tau + 1] < cmnd[tau] {
+                while tau < lag_max && cmnd[tau + 1] < cmnd[tau] {
                     tau += 1;
                 }
                 tau_best = tau;
@@ -381,7 +381,9 @@ impl PitchDetector {
             (tau_best as f64, f64::from(cmnd[tau_best]))
         };
 
-        if !(t_frac > 0.5) {
+        // Reject out-of-window interpolation AND NaN (NaN fails both
+        // comparisons, so the explicit test keeps the guard total).
+        if t_frac.is_nan() || t_frac <= 0.5 {
             return None;
         }
         let freq_hz = sr / t_frac;
@@ -426,9 +428,7 @@ fn sanitize_freq_bounds(cfg: &mut Config) {
         cfg.max_freq = 2000.0;
     }
     cfg.min_freq = cfg.min_freq.clamp(1.0, analysis_rate * 0.45);
-    cfg.max_freq = cfg
-        .max_freq
-        .clamp(cfg.min_freq * 1.01, analysis_rate * 0.5);
+    cfg.max_freq = cfg.max_freq.clamp(cfg.min_freq * 1.01, analysis_rate * 0.5);
 }
 
 // ---------------------------------------------------------------------------
@@ -491,9 +491,7 @@ mod alloc_tests {
 
         let sr = 48000.0f64;
         let sig: Vec<f32> = (0..sr as usize)
-            .map(|i| {
-                (0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / sr).sin()) as f32
-            })
+            .map(|i| (0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / sr).sin()) as f32)
             .collect();
 
         let mut det = PitchDetector::new(Config::default());

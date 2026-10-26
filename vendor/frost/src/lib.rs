@@ -154,12 +154,12 @@ use std::collections::{HashMap, HashSet};
 
 mod backend;
 pub use backend::embed as embedded;
-#[allow(unused_imports)]
-use backend::*;
 /// Scope only: the `Context` documentation below refers to the startup
 /// settings by name.
 #[allow(unused_imports)]
 use backend::embed::EmbeddedConfig;
+#[allow(unused_imports)]
+use backend::*;
 
 mod objects;
 pub use objects::*;

@@ -11,14 +11,13 @@ use wgpu::{
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer,
     BufferBinding, BufferBindingType, BufferDescriptor, BufferUsages, ColorTargetState,
     ColorWrites, CommandEncoderDescriptor, CurrentSurfaceTexture, Device, Extent3d, FilterMode,
-    FragmentState, MipmapFilterMode, MultisampleState, PipelineCompilationOptions,
-    PipelineLayout, PipelineLayoutDescriptor, PrimitiveState, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    Sampler, SamplerBindingType, SamplerDescriptor, ShaderModule, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, SurfaceTexture,
-    TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
-    TextureViewDescriptor, TextureViewDimension, VertexState,
+    FragmentState, MipmapFilterMode, MultisampleState, PipelineCompilationOptions, PipelineLayout,
+    PipelineLayoutDescriptor, PrimitiveState, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+    SamplerDescriptor, ShaderModule, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp,
+    Surface, SurfaceConfiguration, SurfaceTexture, TexelCopyBufferLayout, TexelCopyTextureInfo,
+    TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
+    TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 use winit::dpi::PhysicalSize;
 use winit::event::MouseButton;
@@ -845,10 +844,10 @@ impl<P: Process> Frost<P> {
     /// A character with no live press is the host describing a key frost
     /// does not track, and passes.
     pub(crate) fn note_key_char(&mut self, ch: char) {
-        if let Some(code) = self.last_pressed {
-            if self.keys.contains(&code) {
-                self.typed.insert(code, ch);
-            }
+        if let Some(code) = self.last_pressed
+            && self.keys.contains(&code)
+        {
+            self.typed.insert(code, ch);
         }
     }
 
@@ -1087,13 +1086,17 @@ impl<P: Process> Frost<P> {
         let pixel_size = self.pixel_size();
         let config = {
             let surface = self.surface.as_ref()?;
-            let mut config = surface
-                .get_default_config(&self.adapter, pixel_size.0, pixel_size.1)?;
+            let mut config =
+                surface.get_default_config(&self.adapter, pixel_size.0, pixel_size.1)?;
             // The host picked this format when it built the surface; keep
             // it as long as the new chain actually supports it, and say
             // plainly when it does not.
             if let Some(want) = self.surface_format {
-                if surface.get_capabilities(&self.adapter).formats.contains(&want) {
+                if surface
+                    .get_capabilities(&self.adapter)
+                    .formats
+                    .contains(&want)
+                {
                     config.format = want;
                 } else {
                     log::warn!(

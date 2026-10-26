@@ -12,10 +12,7 @@ use crate::{TunerParams, TunerSharedState};
 use baseview::{EventStatus, HandlerError, WindowContext, WindowHandler};
 use frost::embedded::{Embedded, EmbeddedConfig, FrameError};
 use std::cell::RefCell;
-use std::sync::{
-    Arc,
-    atomic::AtomicBool,
-};
+use std::sync::{Arc, atomic::AtomicBool};
 
 /// OFL font shipped with the frost fork; `Arc<[u8]>` for cheap shape sharing.
 pub fn font() -> Arc<[u8]> {
@@ -194,11 +191,9 @@ impl WindowHandler for TunerWindow {
                     }
                     // keyboard_types 0.8: typed characters ride in
                     // `key: Key::Character` on key-down events
-                    if down {
-                        if let keyboard_types::Key::Character(s) = &ke.key {
-                            for ch in s.chars() {
-                                engine.embedded.add_text(ch);
-                            }
+                    if down && let keyboard_types::Key::Character(s) = &ke.key {
+                        for ch in s.chars() {
+                            engine.embedded.add_text(ch);
                         }
                     }
                     use keyboard_types::Modifiers;

@@ -80,3 +80,12 @@ This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
 - [x] M4 baseview→frost adapter (`src/gui.rs`) + tuner scene (`src/tuner_ui.rs`)
 - [x] M5 DSP→GUI wiring (analysis gated on editor open; shared atomics, zero RT allocs)
 - [x] M6 `scripts/check.sh` all gates green, incl. `Nice Tuner.clap`/`.vst3` bundling
+
+## Development
+
+Full gate (fmt, clippy `-D warnings`, tests, linker, bundling): `bash scripts/check.sh`.
+It also runs automatically on `git push` once the hook is installed per clone:
+
+```sh
+git config core.hooksPath .githooks
+```

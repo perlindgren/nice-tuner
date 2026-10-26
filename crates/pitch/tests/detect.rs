@@ -133,8 +133,10 @@ impl Lcg {
 
 #[test]
 fn silence_produces_no_confident_detection() {
-    let mut cfg = Config::default();
-    cfg.min_clarity = 0.0; // observe raw results, ungated
+    let cfg = Config {
+        min_clarity: 0.0, // observe raw results, ungated
+        ..Config::default()
+    };
     let mut det = PitchDetector::new(cfg);
     let silence = vec![0.0f32; (SR * 2.0) as usize];
     let dets = run_chunks(&mut det, &silence, 512);
@@ -155,12 +157,16 @@ fn cfg_default_min_clarity() -> f64 {
 #[test]
 fn white_noise_never_confident() {
     // Ungated so we can inspect raw clarity values.
-    let mut cfg = Config::default();
-    cfg.min_clarity = 0.0;
+    let cfg = Config {
+        min_clarity: 0.0,
+        ..Config::default()
+    };
     let mut det = PitchDetector::new(cfg);
 
     let mut rng = Lcg::new(0x1234_5678_9abc_def0);
-    let noise: Vec<f32> = (0..(SR * 3.0) as usize).map(|_| 0.5 * rng.next_f32()).collect();
+    let noise: Vec<f32> = (0..(SR * 3.0) as usize)
+        .map(|_| 0.5 * rng.next_f32())
+        .collect();
     let dets = run_chunks(&mut det, &noise, 333);
 
     // Detections may exist (window completed) but must never be confident.
@@ -175,7 +181,9 @@ fn white_noise_never_confident() {
     // Also check the fully-gated path emits nothing.
     let mut gated = PitchDetector::new(Config::default());
     let mut rng2 = Lcg::new(0xdead_beef_cafe_1234);
-    let noise2: Vec<f32> = (0..(SR * 2.0) as usize).map(|_| 0.5 * rng2.next_f32()).collect();
+    let noise2: Vec<f32> = (0..(SR * 2.0) as usize)
+        .map(|_| 0.5 * rng2.next_f32())
+        .collect();
     let dets2 = run_chunks(&mut gated, &noise2, 512);
     assert!(
         dets2.is_empty(),

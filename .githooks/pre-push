@@ -1,0 +1,10 @@
+#!/bin/sh
+# Pre-push gate: the full check (fmt, clippy -D warnings, checks, tests,
+# grep gate, linker, bundling). Needs a working cargo; CARGO_HOME defaults
+# to the repo-local .cargohome via scripts/check.sh.
+#
+# Installed via:  git config core.hooksPath .githooks
+# (see README, Development). Emergency bypass: git push --no-verify.
+set -e
+cd "$(git rev-parse --show-toplevel)"
+exec bash scripts/check.sh

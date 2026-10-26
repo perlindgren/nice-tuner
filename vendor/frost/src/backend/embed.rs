@@ -156,6 +156,9 @@ impl<P: Process> Embedded<P> {
     /// dangling number by the first capability question (this replaced a
     /// private-instance adapter, which panicked exactly that way under
     /// wgpu 30's per-instance globals).
+    // Eleven parameters, but they are one GPU context's worth of
+    // state and constructing it piecemeal is worse than one honest call.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         device: Device,
         queue: Queue,

@@ -4,6 +4,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export CARGO_HOME="${CARGO_HOME:-$PWD/.cargohome}"
 
+echo "== cargo fmt =="
+cargo fmt --all -- --check
+
+echo "== clippy (workspace + standalone/ASIO configs, deny warnings) =="
+cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p nice-tuner --features standalone --all-targets -- -D warnings
+# Inert on non-Windows (cpal gates its ASIO host by target); real there.
+cargo clippy -p nice-tuner --features standalone-asio --all-targets -- -D warnings
+
 echo "== plugin lib (cdylib) check =="
 cargo check
 
@@ -14,7 +23,7 @@ echo "== tests: pitch crate =="
 cargo test --manifest-path crates/pitch/Cargo.toml
 
 echo "== tests: frost fork (pure-logic) =="
-cargo test --manifest-path vendor/frost/Cargo.toml || echo "NOTE: frost test status reported above"
+cargo test --manifest-path vendor/frost/Cargo.toml
 
 echo "== winit event-loop grep gate =="
 if grep -rn "EventLoop\|ActiveEventLoop\|ApplicationHandler\|WindowAttributes" vendor/frost/src --include='*.rs' \

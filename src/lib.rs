@@ -12,11 +12,11 @@ use nice_plug::editor::dpi::{LogicalSize, NativeSize};
 use nice_plug::editor::{EditorHandle, HostMethods, SpawnedEditor};
 use nice_plug::prelude::*;
 use std::error::Error;
+use std::sync::atomic::AtomicU64;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::sync::atomic::AtomicU64;
 
 const MIN_SIZE: LogicalSize<f32> = LogicalSize::new(480.0, 320.0);
 const DEFAULT_SIZE: LogicalSize<f32> = LogicalSize::new(640.0, 400.0);
@@ -50,6 +50,12 @@ pub struct TunerSharedState {
     /// Gate threshold in dB, mirrored from the param for the GUI's
     /// signal-present decision.
     pub gate_db: AtomicCell<f32>,
+}
+
+impl Default for TunerSharedState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TunerSharedState {
@@ -398,9 +404,10 @@ impl Plugin for TunerPlugin {
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         // Param mirrors for the GUI thread (cheap, once per block).
-        self.shared
-            .a4_ref_bits
-            .store((self.params.a4_ref.value() as f64).to_bits(), Ordering::Relaxed);
+        self.shared.a4_ref_bits.store(
+            (self.params.a4_ref.value() as f64).to_bits(),
+            Ordering::Relaxed,
+        );
         self.shared.gate_db.store(self.params.gate_db.value());
 
         if let Some(detector) = self.detector.as_mut() {
@@ -450,8 +457,7 @@ fn now_epoch_ms() -> u64 {
 
 impl ClapPlugin for TunerPlugin {
     const CLAP_ID: &'static str = "com.nice-tuner.nice-tuner";
-    const CLAP_DESCRIPTION: Option<&'static str> =
-        Some("A stringed-instrument chromatic tuner");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("A stringed-instrument chromatic tuner");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[
