@@ -46,6 +46,10 @@ pub struct TunerSharedState {
     /// silent sibling by up to 6 dB — hosts meter the live channel.
     pub input_rms: AtomicCell<f32>,
     pub input_peak: AtomicCell<f32>,
+    /// Selected input channel: 0 = auto, n = 1-based channel for BOTH the
+    /// meter and the analyzed mono feed (set live by the panel, seeded from
+    /// the settings file in standalone; stays 0 = auto inside a host).
+    pub input_channel: AtomicCell<u32>,
     /// Wall-clock ms (UNIX epoch) of the last confident detection; the UI
     /// treats the signal as absent when this goes stale (the detector only
     /// reports confident windows).
@@ -82,6 +86,7 @@ impl TunerSharedState {
             rms: AtomicCell::new(0.0),
             input_rms: AtomicCell::new(0.0),
             input_peak: AtomicCell::new(0.0),
+            input_channel: AtomicCell::new(0),
             last_detection_ms: AtomicU64::new(0),
             a4_ref_bits: AtomicU64::new(440.0f64.to_bits()),
             gate_db: AtomicCell::new(-60.0),
@@ -159,6 +164,9 @@ pub fn seed_standalone_params(shared: &TunerSharedState, s: &settings::Settings)
     if let Some(gate) = s.gate_db {
         shared.gate_db.store(gate);
     }
+    if let Some(ch) = s.input_channel {
+        shared.input_channel.store(ch);
+    }
 }
 
 #[cfg(test)]
@@ -175,16 +183,19 @@ mod tests {
             &settings::Settings {
                 a4_ref: Some(432.0),
                 gate_db: Some(-45.0),
+                input_channel: Some(1),
                 ..Default::default()
             },
         );
         assert_eq!(shared.a4_ref(), 432.0);
         assert_eq!(shared.gate_db.load(), -45.0);
+        assert_eq!(shared.input_channel.load(), 1);
 
         // Absent fields must not clobber: values survive a seed pass.
         seed_standalone_params(&shared, &settings::Settings::default());
         assert_eq!(shared.a4_ref(), 432.0);
         assert_eq!(shared.gate_db.load(), -45.0);
+        assert_eq!(shared.input_channel.load(), 1);
     }
 }
 
@@ -539,10 +550,11 @@ impl Plugin for TunerPlugin {
             // the mix: per-channel sums of squares and the block sample
             // peak. Stack arrays, pure arithmetic — no allocation, one
             // atomic store after the loop.
+            let sel_ch = self.shared.input_channel.load();
             const MAX_CH: usize = 8;
             let mut sq = [0f64; MAX_CH];
+            let mut pks = [0f32; MAX_CH];
             let mut frames = 0usize;
-            let mut pk: f32 = 0.0;
             for (_start, blk) in buffer.iter_blocks(CHUNK) {
                 let n = blk.samples().min(CHUNK);
                 // Downmix and metering see the first MAX_CH channels; the
@@ -551,18 +563,24 @@ impl Plugin for TunerPlugin {
                 frames += n;
                 for i in 0..n {
                     let mut acc = 0.0f32;
-                    for (c, ch_sq) in sq.iter_mut().take(nch).enumerate() {
+                    for (c, (ch_sq, ch_pk)) in
+                        sq.iter_mut().zip(pks.iter_mut()).take(nch).enumerate()
+                    {
                         if let Some(ch) = blk.get(c) {
                             let v = ch[i];
                             acc += v;
                             *ch_sq += (v as f64) * (v as f64);
                             let av = if v < 0.0 { -v } else { v };
-                            if av > pk {
-                                pk = av;
+                            if av > *ch_pk {
+                                *ch_pk = av;
                             }
                         }
                     }
-                    mono[i] = acc / nch as f32;
+                    mono[i] = if sel_ch >= 1 && sel_ch <= nch as u32 {
+                        blk.get(sel_ch as usize - 1).map_or(0.0, |ch| ch[i])
+                    } else {
+                        acc / nch as f32
+                    };
                 }
                 // Ring full (UI stalled longer than ~0.7 s): drop the block
                 // whole. A torn stream would poison detections; stale
@@ -571,12 +589,24 @@ impl Plugin for TunerPlugin {
                 let _ = self.audio_ring.push_entire_slice(&mono[..n]);
             }
             if frames > 0 {
-                let mut rms_max = 0.0f64;
-                for v in &sq {
-                    rms_max = rms_max.max((v / frames as f64).sqrt());
-                }
-                self.shared.input_rms.store(rms_max as f32);
-                self.shared.input_peak.store(pk);
+                let pick = if sel_ch >= 1 && (sel_ch as usize) <= MAX_CH {
+                    sel_ch as usize - 1
+                } else {
+                    usize::MAX
+                };
+                let (r, p) = if pick != usize::MAX {
+                    ((sq[pick] / frames as f64).sqrt(), pks[pick])
+                } else {
+                    let mut rms_max = 0.0f64;
+                    let mut pk = 0.0f32;
+                    for (v, pv) in sq.iter().zip(&pks) {
+                        rms_max = rms_max.max((v / frames as f64).sqrt());
+                        pk = pk.max(*pv);
+                    }
+                    (rms_max, pk)
+                };
+                self.shared.input_rms.store(r as f32);
+                self.shared.input_peak.store(p);
             }
         }
 

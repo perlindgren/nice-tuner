@@ -88,8 +88,8 @@ This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
 ## Settings panel (standalone)
 
 The standalone app's tuner screen has a `SETTINGS` button (top-right) opening a
-panel for **backend, sample rate, buffer size, input/output devices — and the
-A4/gate params** — device dropdowns are enumerated live via cpal (ASIO appears
+panel for **backend, sample rate, buffer size, input/output devices and
+channel — and the A4/gate params** — device dropdowns are enumerated live via cpal (ASIO appears
 only in builds with `--features standalone-asio`; enumeration loads each
 registered ASIO driver, so the first open can pause a moment where several are
 installed).

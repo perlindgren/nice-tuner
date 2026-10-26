@@ -566,6 +566,7 @@ enum Dropdown {
     /// Plugin-param pickers. In a host the host renders these controls;
     /// standalone has none, so the panel plays that role — same atomics the
     /// `process()` mirror feeds in host mode (see lib.rs).
+    InputCh,
     A4,
     Gate,
 }
@@ -672,6 +673,10 @@ impl TunerUi {
             Dropdown::Output => with_default(&self.output_opts),
             Dropdown::Rate => with_default(&self.rate_opts),
             Dropdown::Buffer => with_default(&self.buffer_opts),
+            Dropdown::InputCh => ["Auto (loudest)", "1", "2", "3", "4", "5", "6", "7", "8"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
             Dropdown::A4 => A4_OPTIONS.iter().map(|v| format!("{v:.0} Hz")).collect(),
             Dropdown::Gate => GATE_OPTIONS.iter().map(|v| format!("{v:.0} dB")).collect(),
         }
@@ -702,6 +707,7 @@ impl TunerUi {
                 .period_size
                 .and_then(|p| self.buffer_opts.iter().position(|s| *s == p.to_string()))
                 .map_or(0, |i| i + 1),
+            Dropdown::InputCh => self.shared.input_channel.load().min(8) as usize,
             Dropdown::A4 => A4_OPTIONS
                 .iter()
                 .position(|v| (*v as f64 - self.shared.a4_ref()).abs() < 0.05)
@@ -757,6 +763,13 @@ impl TunerUi {
                     self.buffer_opts.get(idx - 1).and_then(|s| s.parse().ok())
                 };
             }
+            // Channel select is live for BOTH meter and detection: the RT
+            // feed becomes exactly this channel (auto keeps the mono mix /
+            // hottest-channel meter). No restart; APPLY persists.
+            Dropdown::InputCh => {
+                self.settings.input_channel = Some(idx as u32);
+                self.shared.input_channel.store(idx as u32);
+            }
             // Params are live the moment they are picked (no restart needed);
             // APPLY only decides whether they persist to the next launch.
             Dropdown::A4 => {
@@ -808,6 +821,10 @@ impl TunerUi {
                 .as_deref()
                 .map(|d| clip(d, 26))
                 .unwrap_or_else(|| "(system default)".into()),
+            Dropdown::InputCh => match self.shared.input_channel.load() {
+                0 => "auto (loudest)".to_string(),
+                n => format!("channel {n}"),
+            },
             Dropdown::A4 => format!("{:.1} Hz", self.shared.a4_ref()),
             Dropdown::Gate => format!("{:.0} dB", self.shared.gate_db.load()),
         }
@@ -820,11 +837,12 @@ impl TunerUi {
         let font = std::sync::Arc::clone(&self.font);
         let z = 0.4f32;
 
-        const ROWS: [(&str, Dropdown); 7] = [
+        const ROWS: [(&str, Dropdown); 8] = [
             ("Backend", Dropdown::Backend),
             ("Sample rate", Dropdown::Rate),
             ("Buffer (frames)", Dropdown::Buffer),
             ("Input device", Dropdown::Input),
+            ("Input channel", Dropdown::InputCh),
             ("Output device", Dropdown::Output),
             ("A4 reference", Dropdown::A4),
             ("Input gate", Dropdown::Gate),
@@ -832,7 +850,7 @@ impl TunerUi {
         // Rows 5+ (A4, gate) are the param block: an extra gap drops them
         // below the audio block instead of running one uniform ladder.
         let row_y = |i: usize| {
-            h / 2.0 - 46.0 * fit - i as f32 * 38.0 * fit - if i >= 5 { 26.0 } else { 0.0 } * fit
+            h / 2.0 - 46.0 * fit - i as f32 * 38.0 * fit - if i >= 6 { 26.0 } else { 0.0 } * fit
         };
         let bx = w / 2.0 - 185.0 * fit; // value-button column
         let bhw = 165.0 * fit;
@@ -929,7 +947,7 @@ impl TunerUi {
                 by + 34.0 * fit,
                 &font,
                 format!(
-                    "saved to {} · audio: Apply restarts · A4/gate: live, saved on Apply",
+                    "saved to {} · audio: Apply restarts · A4/gate/channel: live, saved on Apply",
                     crate::settings::FILE_NAME,
                 ),
                 19.8 * fit,

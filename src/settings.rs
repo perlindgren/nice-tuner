@@ -41,6 +41,10 @@ pub struct Settings {
     /// plays that role. Not CLI flags — never fed to `effective_args`.
     pub a4_ref: Option<f32>,
     pub gate_db: Option<f32>,
+    /// Input channel, 1-based; None/0 = auto (meter: hottest channel,
+    /// detector: honest mono mix). A noisy sibling channel makes
+    /// max-channel wrong — the right input must be picked explicitly.
+    pub input_channel: Option<u32>,
 }
 
 impl Settings {
