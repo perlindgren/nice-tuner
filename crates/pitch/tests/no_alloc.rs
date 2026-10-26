@@ -1,12 +1,13 @@
 //! Hard gate: the *detection* path of the pitch detector performs zero heap
 //! allocations once the detector is warm.
 //!
-//! The buffers (`window`, `d`, `cmnd`) are allocated in `PitchDetector::new`,
-//! which runs from the plugin's `activate()` — the real-audio-callback
-//! contract then requires silence from the allocator on every block. This
-//! test enforces that contract at the DSP level with a counting global
-//! allocator, independent of nice-plug's `assert_process_allocs` (which
-//! guards the full `process()` callback only in debug builds at runtime).
+//! The buffers (`window`, `d`, `cmnd`) are allocated in `PitchDetector::new`
+//! (run by `TunerUi`, on the UI thread); the per-window analysis contract
+//! then requires silence from the allocator on every push. This test enforces
+//! that contract at the DSP level with a counting global allocator. The
+//! complementary RT-side contract (audio thread → ring handoff) is gated by
+//! nice-tuner/tests/rt_handoff_no_alloc.rs, and nice-plug's
+//! `assert_process_allocs` guards the full `process()` callback at runtime.
 //!
 //! Kept to one test in its own binary so the counting window has no other
 //! allocator traffic: the libtest harness is parked while this runs.

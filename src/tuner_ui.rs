@@ -106,10 +106,32 @@ pub struct TunerUi {
     rate_opts: Vec<String>,
     buffer_opts: Vec<String>,
     save_note: Option<String>,
+    // ---- analysis. This is the UI thread (nice-plug's main thread, pumped
+    // by frost frames): detection runs HERE, never in the audio callback.
+    // The consumer half is borrowed from the shared state on open and
+    // returned on close (Drop); TunerPlugin owns the producer half. ----
+    rb: Option<rtrb::Consumer<f32>>,
+    detector: Option<pitch::PitchDetector>,
+    det_rate: f64,
+}
+
+/// Return the analysis feed so the next editor session can take it.
+/// Main thread: frost tears the UI down inside the window handler.
+impl Drop for TunerUi {
+    fn drop(&mut self) {
+        if let Some(rb) = self.rb.take() {
+            self.shared.put_consumer(rb);
+        }
+    }
 }
 
 impl TunerUi {
     pub fn new(shared: Arc<TunerSharedState>, font: Arc<[u8]>) -> Self {
+        let mut rb = shared.take_consumer();
+        // A reopened editor analyzes fresh audio, not last session's backlog.
+        if let Some(rb) = rb.as_mut() {
+            while rb.pop().is_ok() {}
+        }
         Self {
             shared,
             font,
@@ -134,6 +156,56 @@ impl TunerUi {
             rate_opts: Vec::new(),
             buffer_opts: Vec::new(),
             save_note: None,
+            rb,
+            detector: None,
+            det_rate: 0.0,
+        }
+    }
+
+    /// Drain the RT feed and run pitch detection — on this (UI) thread, so
+    /// the bursty window search can at worst delay the needle, never glitch
+    /// audio. Called once per frost frame, including while the settings page
+    /// is up (state keeps warming behind it).
+    fn analyze(&mut self) {
+        let Some(rb) = self.rb.as_mut() else { return };
+        let rate = self.shared.sample_rate_hz.load();
+        if rate > 0.0 && (self.detector.is_none() || self.det_rate != rate) {
+            self.detector = Some(pitch::PitchDetector::new(pitch::Config {
+                sample_rate: rate,
+                min_freq: 30.0,   // 5-string bass B0
+                max_freq: 2100.0, // harmonics up past the guitar's E7 territory
+                ..Default::default()
+            }));
+            self.det_rate = rate;
+        }
+        let Some(detector) = self.detector.as_mut() else {
+            return;
+        };
+        // Catch-up cap: after a long pump stall, analyze the most recent
+        // audio rather than grinding through a stale backlog. Older samples
+        // are dropped from the head (Consumer side: legal in SPSC).
+        const MAX_DRAIN: usize = 16384; // ~0.34 s
+        if rb.slots() > MAX_DRAIN {
+            let skip = rb.slots() - MAX_DRAIN;
+            for _ in 0..skip {
+                let _ = rb.pop();
+            }
+        }
+        const CHUNK: usize = 4096;
+        let mut buf = [0f32; CHUNK];
+        while rb.slots() > 0 {
+            let want = rb.slots().min(CHUNK);
+            if rb.pop_entire_slice(&mut buf[..want]).is_err() {
+                break;
+            }
+            if let Some(d) = detector.push_samples(&buf[..want]) {
+                self.shared.freq_hz.store(d.freq_hz);
+                self.shared.clarity.store(d.clarity);
+                self.shared.rms.store(d.rms);
+                self.shared
+                    .last_detection_ms
+                    .store(crate::now_epoch_ms(), Ordering::Relaxed);
+            }
         }
     }
 }
@@ -141,9 +213,10 @@ impl TunerUi {
 impl Process for TunerUi {
     fn process(&mut self, ctx: &mut Context, dt: f32) {
         let dt = dt.clamp(0.0, 0.25); // tolerate host pauses
+        self.analyze();
 
-        // ---- read shared state (written by the audio thread) --------------
-        // The detector already applied its clarity gate on the audio thread
+        // ---- read shared state (updated by analyze(), above) --------------
+        // The detector already applied its clarity gate
         // (push_samples only yields confident windows), so "signal present"
         // here = a *fresh* detection + level above the user gate.
         let freq = self.shared.freq_hz.load();

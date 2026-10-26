@@ -1,11 +1,13 @@
-//! Callback-budget probe: how long does ONE 64-frame `push_samples` take?
+//! Detection-cost probe: how long does ONE `push_samples` call take?
 //!
-//! Background: detection is bursty — most callbacks just buffer samples, one
-//! in a while runs a full window search. With a 64-frame period at 48 kHz the
-//! RT budget per callback is 1.33 ms; an unoptimized (opt-level 0) search
-//! burst blows it, which is why debug builds needed large buffers.
-//! `Cargo.toml` pins `[profile.dev.package.pitch] opt-level = 3` for exactly
-//! this reason; this test guards that budget in the dev profile.
+//! Detection is bursty — most calls just buffer samples; one in a while runs
+//! a full window search. That cost lands on the editor's frost-frame pump
+//! (nice-plug's main/UI thread; analysis deliberately does NOT run on the
+//! audio thread), where the frame budget is ~16.7 ms. In the dev profile an
+//! opt-level-0 search burst measures ~2.3 ms and visibly stutters the frame
+//! loop, which is why `Cargo.toml` pins
+//! `[profile.dev.package.pitch] opt-level = 3` (burst → ~0.26 ms). The
+//! assertions below are what enforces that pin: at opt-level 0 this fails.
 
 use pitch::{Config, PitchDetector};
 use std::time::Instant;
@@ -14,7 +16,7 @@ const SR: f64 = 48000.0;
 const PERIOD: usize = 64;
 
 #[test]
-fn callback_budget_64_frames() {
+fn search_burst_stays_inside_the_frame_budget() {
     let cfg = Config {
         sample_rate: SR,
         ..Config::default()
@@ -51,14 +53,19 @@ fn callback_budget_64_frames() {
         max
     );
 
-    // The detector must keep up: faster than 4× realtime amortized.
+    // The UI pump must keep up comfortably: faster than 4× realtime.
     assert!(wall < 3.0, "cannot keep up: {wall:.2}s for 12s audio");
-    // Worst single callback must stay inside 4× the 1.33 ms budget. Tighter
-    // would flake on a loaded CI box; unoptimized pitch code burst ~10 ms+,
-    // so this still catches the regression it guards.
+    // Discriminator is p99 (stable under uniform CPU load; the absolute max
+    // is not): pinned dev profile measures ~0.2 ms, unpinned ~2.2 ms — an
+    // order of magnitude apart, so 1.0 ms separates them without flaking on
+    // a loaded machine. The max bound just catches pathological regressions.
+    assert!(
+        p99 < 1.0,
+        "p99 {p99:.2} ms: bursts approaching the unpinned (~2.2 ms) regime"
+    );
     assert!(
         max < 4.0,
-        "worst callback {max:.2} ms blows the 64-frame budget"
+        "pathological burst {max:.2} ms — over a quarter frame"
     );
     assert!(detections > 50, "detector silent: {detections} detections");
 }

@@ -50,6 +50,13 @@ pub struct TunerSharedState {
     /// Gate threshold in dB, mirrored from the param for the GUI's
     /// signal-present decision.
     pub gate_db: AtomicCell<f32>,
+    /// Sample rate reported by `activate()`; the UI-thread detector is
+    /// (re)built against this value whenever it changes.
+    pub sample_rate_hz: AtomicCell<f64>,
+    /// Analysis-feed consumer, parked here while no editor is open.
+    /// `TunerUi` borrows it on open and returns it on close (Drop) — main
+    /// thread only; the audio thread only ever holds the `Producer` half.
+    consumer_slot: std::sync::Mutex<Option<rtrb::Consumer<f32>>>,
 }
 
 impl Default for TunerSharedState {
@@ -70,7 +77,22 @@ impl TunerSharedState {
             last_detection_ms: AtomicU64::new(0),
             a4_ref_bits: AtomicU64::new(440.0f64.to_bits()),
             gate_db: AtomicCell::new(-60.0),
+            sample_rate_hz: AtomicCell::new(0.0),
+            consumer_slot: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Main thread (editor opening): take the analysis feed, if parked.
+    pub fn take_consumer(&self) -> Option<rtrb::Consumer<f32>> {
+        self.consumer_slot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+    }
+
+    /// Main thread (editor closing): park the feed for the next session.
+    pub fn put_consumer(&self, consumer: rtrb::Consumer<f32>) {
+        *self.consumer_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(consumer);
     }
 
     pub fn logical_size(&self) -> LogicalSize<f32> {
@@ -312,11 +334,17 @@ impl Drop for TunerEditorHandle {
 // ---------------------------------------------------------------------------------------------------
 // Plugin
 
-/// The tuner plugin. Audio is passed through; the value it adds is analysis.
+/// The tuner plugin. Audio is passed through; the value it adds is analysis —
+/// which runs on the UI thread: `process()` only feeds a lock-free ring, and
+/// the editor's frost frames (nice-plug's main thread, in host and standalone
+/// alike) drain and detect. When the editor is closed there is no analysis
+/// cost at all: the feed is not even written.
 pub struct TunerPlugin {
     params: Arc<TunerParams>,
     shared: Arc<TunerSharedState>,
-    detector: Option<pitch::PitchDetector>,
+    /// Producer half of the analysis feed (lock-free, preallocated; see
+    /// `tests/rt_handoff_no_alloc.rs`).
+    audio_ring: rtrb::Producer<f32>,
 }
 
 #[derive(Params)]
@@ -331,10 +359,16 @@ pub struct TunerParams {
 
 impl Default for TunerPlugin {
     fn default() -> Self {
+        // ~0.7 s of mono at common rates: a stalled UI pump drops audio into
+        // the ring rather than corrupting it, and a reopened editor clears
+        // the backlog before analyzing.
+        let (producer, consumer) = rtrb::RingBuffer::new(1 << 15);
+        let shared = Arc::new(TunerSharedState::new());
+        shared.put_consumer(consumer);
         Self {
             params: Arc::new(TunerParams::default()),
-            shared: Arc::new(TunerSharedState::new()),
-            detector: None,
+            shared,
+            audio_ring: producer,
         }
     }
 }
@@ -409,12 +443,12 @@ impl Plugin for TunerPlugin {
         buffer_config: &BufferConfig,
         _context: &mut impl ActivateContext<Self>,
     ) -> bool {
-        self.detector = Some(pitch::PitchDetector::new(pitch::Config {
-            sample_rate: buffer_config.sample_rate as f64,
-            min_freq: 30.0,   // 5-string bass B0
-            max_freq: 2100.0, // harmonics up past the guitar's E7 territory
-            ..Default::default()
-        }));
+        // The detector itself lives UI-side (TunerUi); it builds itself from
+        // this rate on the first frame, and rebuilds if the host restarts us
+        // at another one.
+        self.shared
+            .sample_rate_hz
+            .store(buffer_config.sample_rate as f64);
         true
     }
 
@@ -431,37 +465,32 @@ impl Plugin for TunerPlugin {
         );
         self.shared.gate_db.store(self.params.gate_db.value());
 
-        if let Some(detector) = self.detector.as_mut() {
-            if self.shared.is_open() {
-                // Buffer is in-place (the framework copied host input into it);
-                // we never write to it — passthrough — and only read it here.
-                // Stack-only downmix, allocation-free (assert_process_allocs
-                // guards this in debug builds).
-                const CHUNK: usize = 4096;
-                let mut mono = [0f32; CHUNK];
-                for (_start, blk) in buffer.iter_blocks(CHUNK) {
-                    let n = blk.samples().min(CHUNK);
-                    let nch = blk.channels().max(1) as f32;
-                    for i in 0..n {
-                        let mut acc = 0.0f32;
-                        for c in 0..blk.channels() {
-                            if let Some(ch) = blk.get(c) {
-                                acc += ch[i];
-                            }
+        if self.shared.is_open() {
+            // Buffer is in-place (the framework copied host input into it);
+            // we never write to it — passthrough — and only read it here.
+            // Stack-only downmix + a push into the preallocated ring: the
+            // audio thread's entire analysis contribution is this copy.
+            // (assert_process_allocs guards the callback in debug builds;
+            // tests/rt_handoff_no_alloc.rs gates the ring itself.)
+            const CHUNK: usize = 4096;
+            let mut mono = [0f32; CHUNK];
+            for (_start, blk) in buffer.iter_blocks(CHUNK) {
+                let n = blk.samples().min(CHUNK);
+                let nch = blk.channels().max(1) as f32;
+                for i in 0..n {
+                    let mut acc = 0.0f32;
+                    for c in 0..blk.channels() {
+                        if let Some(ch) = blk.get(c) {
+                            acc += ch[i];
                         }
-                        mono[i] = acc / nch;
                     }
-                    if let Some(d) = detector.push_samples(&mono[..n]) {
-                        self.shared.freq_hz.store(d.freq_hz);
-                        self.shared.clarity.store(d.clarity);
-                        self.shared.rms.store(d.rms);
-                        self.shared
-                            .last_detection_ms
-                            .store(now_epoch_ms(), Ordering::Relaxed);
-                    }
+                    mono[i] = acc / nch;
                 }
-            } else {
-                detector.reset();
+                // Ring full (UI stalled longer than ~0.7 s): drop the block
+                // whole. A torn stream would poison detections; stale
+                // atomics read as silence (freshness gate) — the honest
+                // failure is a paused needle, never a glitch or a wrong note.
+                let _ = self.audio_ring.push_entire_slice(&mono[..n]);
             }
         }
 
@@ -469,7 +498,7 @@ impl Plugin for TunerPlugin {
     }
 }
 
-fn now_epoch_ms() -> u64 {
+pub(crate) fn now_epoch_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

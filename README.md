@@ -70,13 +70,18 @@ This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
 
 - **No vsync**: the GUI surface runs `PresentMode::AutoNoVsync`; plugins must
   never block the host main thread.
-- **Real-time safety**: `process()` is guarded by nice-plug's
-  `assert_process_allocs` in debug builds; the detector preallocates.
-- **Debug builds survive small buffers**: pitch detection runs its (bursty)
-  window search on the audio thread, so `Cargo.toml` keeps `pitch` at
-  `opt-level = 3` even in the dev profile — worst callback drops from ~2.3 ms
-  to ~0.25 ms, inside the 1.33 ms budget of a 64-frame period at 48 kHz.
-  Guarded by `crates/pitch/tests/callback_budget.rs`.
+- **Real-time safety**: the audio thread does no analysis at all — it
+  downmixs on the stack and pushes into a preallocated lock-free
+  [rtrb](https://crates.io/crates/rtrb) ring; pitch detection runs on the UI
+  thread (frost's frame pump = nice-plug's main thread), gated on the editor
+  being open. Gates: `tests/rt_handoff_no_alloc.rs` (zero-alloc, lossless
+  handoff) + nice-plug's `assert_process_allocs` on `process()`. When the
+  editor is closed even the ring write stops: `process()` is pure passthrough.
+- **Debug builds stay smooth**: the detector's window search is bursty and
+  runs on the UI frame pump, so `Cargo.toml` keeps `pitch` at `opt-level = 3`
+  even in the dev profile — the worst burst drops from ~2.3 ms to ~0.26 ms
+  and the 60 fps frame loop never visibly stutters. Guarded by
+  `crates/pitch/tests/callback_budget.rs` (it fails if the pin is removed).
 - **Winit is absent from the runtime path**: `vendor/frost` keeps winit only for
   event *data types*; constructing an `EventLoop` is grep-gated out of the tree.
 

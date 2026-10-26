@@ -58,17 +58,20 @@ serde_json = "1"
 # additive on the unified dependency graph.
 cpal = { version = "0.18", optional = true }
 pitch = { path = "crates/pitch" }
+# RT↔UI analysis handoff (audio thread: producer; editor frame: consumer).
+# Already in the graph via nice-plug standalone; version-matched here.
+rtrb = "0.4"
 # M3: frost fork (embedded renderer, winit run loop + rodio removed)
 frost = { path = "vendor/frost" }
 
 [workspace]
 members = ["xtask", "crates/pitch", "vendor/frost"]
 
-# Dev-profile audio budget: pitch detection is bursty — one window-search
-# every ~85 ms runs on the *audio thread* inside the device callback. At
-# opt-level 0 that burst (measured ~2.3 ms) overshoots a 64-frame callback
-# budget (1.33 ms) and clicks. One optimized crate keeps debug builds live
-# at small buffers; everything else stays fast to compile and debuggable.
-# Regression guard: crates/pitch/tests/callback_budget.rs
+# Dev-profile analysis cost: detection is bursty (one window-search per ~85 ms
+# of audio) and runs in the editor's frost-frame pump — the nice-plug main/UI
+# thread, in host and standalone alike. At opt-level 0 a burst measures
+# ~2.3 ms, enough to stutter a 60 fps frame loop; opt-level 3 brings it to
+# ~0.26 ms. (It no longer threatens audio: analysis left the RT thread — see
+# lib.rs.) Regression guard: crates/pitch/tests/callback_budget.rs.
 [profile.dev.package.pitch]
 opt-level = 3
