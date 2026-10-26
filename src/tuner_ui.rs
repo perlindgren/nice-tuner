@@ -85,18 +85,9 @@ pub struct TunerUi {
     // smoothed display state
     needle_cents: f32, // EMA'd cents shown on the gauge
     latch_midi: i16,   // -1 = nothing latched
-    /// Meter: current input level (bar), RMS-based, EMA-smoothed every
-    /// frame (fast attack, moderate release).
-    meter_level_db: f32,
-    /// Meter: peak marker. Input exceeding the SHOWN marker jumps it up and
-    /// re-arms the 1 s stick; when the stick lapses it falls at a constant
-    /// dB/s toward the current level — so it can never sit below a signal
-    /// that is louder than it looks.
-    meter_peak_db: f32,
-    /// Wall-clock ms when the current stick ends.
-    meter_peak_until_ms: u64,
-    /// Wall-clock ms of the previous meter tick (real dt for the decay).
-    meter_last_ms: u64,
+    /// Input meter ballistics (bar + sticky peak marker), fully unit-tested
+    /// in [`crate::meter`].
+    meter: crate::meter::PeakMeter,
     latch_name: &'static str,
     latch_oct: i8,
     cents_shown: f64,
@@ -147,10 +138,7 @@ impl TunerUi {
             font,
             needle_cents: 0.0,
             latch_midi: -1,
-            meter_level_db: -120.0,
-            meter_peak_db: -120.0,
-            meter_peak_until_ms: 0,
-            meter_last_ms: crate::now_epoch_ms(),
+            meter: crate::meter::PeakMeter::new(crate::now_epoch_ms()),
             latch_name: "–",
             latch_oct: 0,
             cents_shown: 0.0,
@@ -247,28 +235,8 @@ impl TunerUi {
         } else {
             (-120.0, -120.0)
         };
-        {
-            let k = if rms_db > self.meter_level_db {
-                0.5 // fast attack
-            } else {
-                0.08 // moderate release
-            };
-            self.meter_level_db += (rms_db - self.meter_level_db) * k;
-        }
-        // Peak ballistics, per spec: the timer is (re-)applied whenever the
-        // input exceeds the currently SHOWN marker — which also lifts the
-        // marker to that level. With no such exceedance for a full second,
-        // the marker falls at 24 dB/s, floor-pinned at the live level, so a
-        // fall that runs into a louder signal simply sticks again.
-        let now = crate::now_epoch_ms();
-        let dt = (now - self.meter_last_ms).min(200) as f32 / 1000.0;
-        self.meter_last_ms = now;
-        if frame_peak_db > self.meter_peak_db {
-            self.meter_peak_db = frame_peak_db;
-            self.meter_peak_until_ms = now + 1000;
-        } else if now >= self.meter_peak_until_ms {
-            self.meter_peak_db = (self.meter_peak_db - 24.0 * dt).max(self.meter_level_db);
-        }
+        self.meter
+            .tick(rms_db, frame_peak_db, crate::now_epoch_ms());
     }
 }
 
@@ -481,7 +449,7 @@ impl Process for TunerUi {
                 );
             }
             // Bar: current level.
-            let m = self.meter_level_db.clamp(-48.0, 0.0);
+            let m = self.meter.level_db().clamp(-48.0, 0.0);
             let xv = half * (1.0 + m / 24.0);
             if xv > -half + 0.5 {
                 ctx.rectangle(
@@ -496,7 +464,7 @@ impl Process for TunerUi {
             }
             // Peak marker: a thin bright line at the held peak, above the
             // bar in z; sits at the bar while rising, sticks after it falls.
-            let p = self.meter_peak_db.clamp(-48.0, 0.0);
+            let p = self.meter.peak_db().clamp(-48.0, 0.0);
             let px = half * (1.0 + p / 24.0);
             if p > -47.5 {
                 ctx.rectangle(px, y, 1.5 * fit, 6.0 * fit, Color { a: 0.9, ..FG }, 0.08);

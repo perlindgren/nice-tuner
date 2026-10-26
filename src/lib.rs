@@ -131,6 +131,7 @@ impl TunerSharedState {
 #[cfg(feature = "standalone")]
 pub mod devices;
 mod gui;
+pub mod meter;
 pub mod settings;
 mod tuner_ui;
 
