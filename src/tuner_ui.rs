@@ -310,7 +310,7 @@ impl Process for TunerUi {
                 &self.font,
                 "SETTINGS",
                 11.0 * fit,
-                500.0,
+                650.0,
                 if hov { AMBER } else { DIM },
                 0.41,
             );
@@ -328,7 +328,7 @@ impl Process for TunerUi {
                 &self.font,
                 "audio: host-managed",
                 10.0 * fit,
-                400.0,
+                550.0,
                 DIM,
                 0.4,
             );
@@ -365,14 +365,14 @@ impl Process for TunerUi {
             if cents >= 0.0 { "+" } else { "−" },
             cents.abs()
         );
-        ctx.text(0.0, -5.0 * fit, font, cents_s, 28.0 * fit, 400.0, main, 0.2);
+        ctx.text(0.0, -5.0 * fit, font, cents_s, 28.0 * fit, 600.0, main, 0.2);
         // frequency + reference
         let freq_s = if signal {
             format!("{:.1} Hz  ·  A4={:.0}", self.freq_shown, a4)
         } else {
             format!("———  ·  A4={:.0}", a4)
         };
-        ctx.text(0.0, -45.0 * fit, font, freq_s, 22.0 * fit, 400.0, DIM, 0.2);
+        ctx.text(0.0, -45.0 * fit, font, freq_s, 22.0 * fit, 550.0, DIM, 0.2);
         // meter fill over the static track (freshness-gated, then decayed:
         // rms only updates on confident detections, so hold briefly and fade)
         let lvl_target = if fresh {
@@ -779,7 +779,7 @@ impl TunerUi {
                 &font,
                 *label,
                 14.0 * fit,
-                400.0,
+                550.0,
                 DIM,
                 z,
             );
@@ -790,7 +790,7 @@ impl TunerUi {
                 &font,
                 self.current_value_label(*dd),
                 13.0 * fit,
-                400.0,
+                550.0,
                 if hov || open { AMBER } else { FG },
                 z + 0.01,
             );
@@ -814,7 +814,7 @@ impl TunerUi {
             &font,
             "BACK",
             13.0 * fit,
-            500.0,
+            650.0,
             if back { AMBER } else { FG },
             z + 0.01,
         );
@@ -832,7 +832,7 @@ impl TunerUi {
             &font,
             "APPLY & RESTART",
             13.0 * fit,
-            600.0,
+            700.0,
             if apply { AMBER } else { GREEN },
             z + 0.01,
         );
@@ -844,7 +844,7 @@ impl TunerUi {
                 &font,
                 clip(note, 90),
                 12.0 * fit,
-                400.0,
+                550.0,
                 AMBER,
                 z,
             ),
@@ -857,7 +857,7 @@ impl TunerUi {
                     crate::settings::FILE_NAME,
                 ),
                 11.0 * fit,
-                400.0,
+                550.0,
                 DIM,
                 z,
             ),
@@ -903,7 +903,7 @@ impl TunerUi {
                     &font,
                     clip(label, 36),
                     12.5 * fit,
-                    if sel { 700.0 } else { 400.0 },
+                    if sel { 700.0 } else { 550.0 },
                     if sel { GREEN } else { FG },
                     z + 0.06,
                 );
