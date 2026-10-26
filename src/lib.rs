@@ -560,7 +560,7 @@ impl Drop for TunerEditorHandle {
 pub struct TunerPlugin {
     params: Arc<TunerParams>,
     shared: Arc<TunerSharedState>,
-    // M2/M5: pitch::PitchDetector goes here
+    detector: Option<pitch::PitchDetector>,
 }
 
 #[derive(Params)]
@@ -578,6 +578,7 @@ impl Default for TunerPlugin {
         Self {
             params: Arc::new(TunerParams::default()),
             shared: Arc::new(TunerSharedState::new()),
+            detector: None,
         }
     }
 }
@@ -652,33 +653,70 @@ impl Plugin for TunerPlugin {
         buffer_config: &BufferConfig,
         _context: &mut impl ActivateContext<Self>,
     ) -> bool {
-        // M5: construct the pitch detector here once the pitch crate lands
-        // (it needs `buffer_config.sample_rate`).
-        let _ = buffer_config;
+        self.detector = Some(pitch::PitchDetector::new(pitch::Config {
+            sample_rate: buffer_config.sample_rate as f64,
+            min_freq: 30.0,   // 5-string bass B0
+            max_freq: 2100.0, // harmonics up past the guitar's E7 territory
+            ..Default::default()
+        }));
         true
     }
 
     fn process(
         &mut self,
-        _buffer: &mut Buffer,
+        buffer: &mut Buffer,
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // The buffer already contains the input; leaving it untouched is the
-        // passthrough we want. Mirror the reference pitch for the GUI without
-        // the GUI thread touching params.
+        // Param mirrors for the GUI thread (cheap, once per block).
         self.shared
             .a4_ref_bits
             .store((self.params.a4_ref.value() as f64).to_bits(), Ordering::Relaxed);
-        self.shared
-            .gate_db
-            .store(self.params.gate_db.value());
+        self.shared.gate_db.store(self.params.gate_db.value());
 
-        // M5: downmix + pitch::PitchDetector::push_samples() -> shared state,
-        // gated on self.shared.is_open() and the gate param.
+        if let Some(detector) = self.detector.as_mut() {
+            if self.shared.is_open() {
+                // Buffer is in-place (the framework copied host input into it);
+                // we never write to it — passthrough — and only read it here.
+                // Stack-only downmix, allocation-free (assert_process_allocs
+                // guards this in debug builds).
+                const CHUNK: usize = 4096;
+                let mut mono = [0f32; CHUNK];
+                for (_start, blk) in buffer.iter_blocks(CHUNK) {
+                    let n = blk.samples().min(CHUNK);
+                    let nch = blk.channels().max(1) as f32;
+                    for i in 0..n {
+                        let mut acc = 0.0f32;
+                        for c in 0..blk.channels() {
+                            if let Some(ch) = blk.get(c) {
+                                acc += ch[i];
+                            }
+                        }
+                        mono[i] = acc / nch;
+                    }
+                    if let Some(d) = detector.push_samples(&mono[..n]) {
+                        self.shared.freq_hz.store(d.freq_hz);
+                        self.shared.clarity.store(d.clarity);
+                        self.shared.rms.store(d.rms);
+                        self.shared
+                            .last_detection_ms
+                            .store(now_epoch_ms(), Ordering::Relaxed);
+                    }
+                }
+            } else {
+                detector.reset();
+            }
+        }
 
         ProcessStatus::Normal
     }
+}
+
+fn now_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 impl ClapPlugin for TunerPlugin {

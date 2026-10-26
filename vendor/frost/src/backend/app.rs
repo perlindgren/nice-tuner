@@ -14,7 +14,7 @@ use wgpu::{
     BufferBinding, BufferBindingType, BufferDescriptor, BufferUsages, ColorTargetState,
     ColorWrites, CommandEncoderDescriptor, CurrentSurfaceTexture, Device, Extent3d, FilterMode,
     FragmentState, MipmapFilterMode, MultisampleState, PipelineCompilationOptions,
-    PipelineLayout, PipelineLayoutDescriptor, PresentMode, PrimitiveState, Queue,
+    PipelineLayout, PipelineLayoutDescriptor, PrimitiveState, Queue,
     RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
     Sampler, SamplerBindingType, SamplerDescriptor, ShaderModule, ShaderModuleDescriptor,
     ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, SurfaceTexture,
@@ -306,11 +306,10 @@ pub(crate) struct Frost<P: Process> {
     /// the adapter offers `Rgba16Float` as an attachment; where it does
     /// not, frames go to the surface directly, exactly as before.
     hdr_frames: bool,
-    /// The watched shader directory, debug builds on filesystem
-    /// targets only: `render` polls it, and a passing batch sets
-    /// `format` to `None` so the pipelines rebuild by the same road
-    /// a surface-format change always took.
-    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+    /// The watched shader directory, debug builds only: `render` polls
+    /// it, and a passing batch sets `format` to `None` so the pipelines
+    /// rebuild by the same road a surface-format change always took.
+    #[cfg(debug_assertions)]
     shaders: crate::shaders::Live,
     /// Millisecond timestamp of the previous rendered frame, used to
     /// compute `dt` (see `now_millis`).
@@ -917,6 +916,51 @@ impl<P: Process> Frost<P> {
             log::debug!("process requested exit; the host decides");
         }
     }
+
+    /// A size the host reports, taken the way a live resize was always
+    /// taken: noted, and honoured once it comes to rest (see
+    /// [`Self::note_resize`]).
+    pub(crate) fn host_resize(&mut self, physical: (u32, u32)) {
+        if physical.0 > 0 && physical.1 > 0 {
+            self.note_resize(PhysicalSize::new(physical.0, physical.1));
+        }
+    }
+
+    /// A scale factor the host reports, applied at once — the old
+    /// `ScaleFactorChanged` path, which never waited for the settle: the
+    /// surface is sized from the current scale on the next configure, and
+    /// a density move is one event, not a flight of sizes.
+    pub(crate) fn host_scale_factor(&mut self, scale_factor: f32) {
+        if (self.scale - scale_factor).abs() <= f32::EPSILON {
+            return;
+        }
+        self.scale = scale_factor;
+        self.resize();
+    }
+
+    /// Whether the surface has stopped handing over frames — the spell
+    /// `acquire_frame` counts (see [`Self::surface_gone`]). The host reads
+    /// this to know a fresh surface is wanted; [`Self::attach_surface`]
+    /// ends the spell.
+    pub(crate) fn surface_lost(&self) -> bool {
+        self.surface_gone.is_some()
+    }
+
+    /// Whether the process asked to leave (see `Context::exit`).
+    pub(crate) fn exit_requested(&self) -> bool {
+        self.exit_requested
+    }
+
+    /// Answers an exit request without leaving, if the host so chooses.
+    pub(crate) fn clear_exit(&mut self) {
+        self.exit_requested = false;
+    }
+
+    /// The scene the engine draws every frame, reachable between frames
+    /// (the `Process` sees the same one through `Context::scene`).
+    pub(crate) fn scene(&mut self) -> &mut Scene {
+        &mut self.scene
+    }
 }
 
 /// How long a window's size must hold still before the engine rebuilds for
@@ -1110,9 +1154,12 @@ impl<P: Process> Frost<P> {
             .note(size.width, size.height, now_millis());
     }
 
-    /// The deferred half of [`Self::note_resize`], asked on every frame: the
-    /// window's size changes, the swap chain follows, and the aspect lock
-    /// corrects the request a fixed render-size window is owed.
+    /// The deferred half of [`Self::note_resize`], asked on every frame:
+    /// the surface's size changes and the swap chain follows. (The old
+    /// engine also ran its aspect lock here, asking the window for a
+    /// corrected shape; the host owns the window's shape now, so a fixed
+    /// render size that disagrees with the surface simply letterboxes —
+    /// the blit has always drawn those bars honestly.)
     fn apply_pending_resize(&mut self) {
         let Some((width, height)) = self.resize_pending.due(now_millis()) else {
             return;
@@ -1125,7 +1172,6 @@ impl<P: Process> Frost<P> {
             (height as f64 / scale).max(1.0).round() as u32,
         );
         self.resize();
-        self.snap_aspect(PhysicalSize::new(width, height));
     }
 
     fn resize(&mut self) {
@@ -1150,134 +1196,12 @@ impl<P: Process> Frost<P> {
         }
     }
 
-    /// The frame rate vsync promises: with vsync on, the refresh rate of
-    /// the monitor the window sits on, as winit reports it (unknown on
-    /// some displays and in the browser); with vsync off, no expected
-    /// rate at all — presentation is uncapped (see `Context::expected_fps`).
-    fn refresh_expected_fps(&mut self, window: &Window) {
-        self.expected_fps = if self.vsync {
-            window
-                .current_monitor()
-                .and_then(|monitor| monitor.refresh_rate_millihertz())
-                .map(|millihertz| millihertz as f32 / 1000.0)
-        } else {
-            None
-        };
-    }
-
-    /// Makes the swap chain follow a mid-run vsync flip: `Context::set_vsync`
-    /// moves the flag — the process holds a `Context`, not the surface —
-    /// and the frame whose process moved it applies the change right after
-    /// its present, so the flip lands between frames: this frame goes out
-    /// at the old mode, the next at the new one. The `surface_vsync` mirror
-    /// makes every other frame a no-op.
-    fn apply_vsync_change(&mut self) {
-        if self.surface_vsync == self.vsync {
-            return;
-        }
-        if self.reconfigure_surface().is_some() {
-            log::info!(
-                "vsync turned {} (present mode {:?})",
-                if self.vsync { "on" } else { "off" },
-                present_mode_for(self.vsync)
-            );
-        }
-        if let Some(window) = self.window.clone() {
-            self.refresh_expected_fps(&window);
-        }
-    }
-
-    /// The engine-side aspect lock of fixed render size mode (see
-    /// `EmbeddedConfig::render_size`): a window dragged to a shape the buffer
-    /// does not fill answers with a request for the corrected size, so
-    /// the corner slides along the diagonal instead of opening letterbox
-    /// bars. winit 0.30 exposes no platform aspect hint (its X11 hint
-    /// field exists but nothing fills it, and the other platforms have no
-    /// code path at all), so the lock rides on the resize events
-    /// themselves: the corrected request re-enters the handler within
-    /// tolerance and the loop stops, while a compositor that declines the
-    /// request (Wayland may) simply keeps the letterbox the blit already
-    /// draws. Maximizing and fullscreen are the user asking for a
-    /// specific rectangle (the work area, the whole display), so they go
-    /// unfought — the guard is what keeps a Windows borderless-fullscreen
-    /// window from answering a size request by resizing itself out of the
-    /// monitor rectangle. On the web there is no window to correct: the
-    /// browser sizes the canvas and the frame letterboxes inside whatever
-    /// shape that gives, so asking for a different rectangle would resize the
-    /// page to the frame's wish — the opposite of what the port is for.
-    fn snap_aspect(&mut self, size: PhysicalSize<u32>) {
-        // `cfg!` rather than `#[cfg]` + `return`, which would leave the rest
-        // of the body an unreachable statement and a refused lint run.
-        if cfg!(target_arch = "wasm32") {
-            return;
-        }
-        let prev = std::mem::replace(&mut self.last_resized_px, (size.width, size.height));
-        let Some(render) = self.render_size else {
-            return;
-        };
-        if !self.resizable {
-            // A pinned window keeps the shape it opened with; the guard
-            // matters because a fixed-size window can still be resized
-            // programmatically, and that should letterbox, not fight.
-            return;
-        }
-        let Some(window) = self.window.as_ref() else {
-            return;
-        };
-        // Maximizing and fullscreen are the user asking for a specific
-        // rectangle (the work area, the whole display), so they go
-        // unfought: the window keeps the shape it was given and the
-        // letterbox the blit draws copes. The guard matters on Windows,
-        // where a borderless-fullscreen window answers a size request by
-        // actually resizing itself out of the monitor rectangle — the
-        // "fullscreen doesn't fill the screen" symptom — while a Wayland
-        // compositor simply declines the request.
-        if window.is_maximized() || window.fullscreen().is_some() {
-            return;
-        }
-        let (w, h) = (size.width as f64, size.height as f64);
-        if w <= 0.0 || h <= 0.0 {
-            return;
-        }
-        let aspect = render[0] as f64 / render[1] as f64;
-        // The correction keeps the axis the user moved: an edge drag
-        // adjusts the other dimension along the diagonal, and the
-        // dragged one tracks the cursor. With no baseline (the first
-        // event) or a balanced corner drag, fit inside the requested
-        // rectangle rather than growing past it.
-        let dw = size.width.abs_diff(prev.0) as f64;
-        let dh = size.height.abs_diff(prev.1) as f64;
-        let (w2, h2) = if prev == (0, 0) || (dw - dh).abs() < 2.0 {
-            if w / h > aspect {
-                (h * aspect, h)
-            } else {
-                (w, w / aspect)
-            }
-        } else if dw > dh {
-            (w, w / aspect)
-        } else {
-            (h * aspect, h)
-        };
-        let (w2, h2) = (w2.round().max(1.0) as u32, h2.round().max(1.0) as u32);
-        // Only correct a visibly wrong shape: the corrected request comes
-        // back within the tolerance, and the conversation ends.
-        if w2.abs_diff(size.width) < 2 && h2.abs_diff(size.height) < 2 {
-            return;
-        }
-        log::debug!("aspect lock: {w}x{h} → {w2}x{h2}");
-        // platforms that do; every platform that applies the request
-        // (and the ones that only deliver it, or decline it outright,
-        // leaving the letterbox to cope) reports through `Resized`,
-        // which is where our own state follows.
-        self.aspect_pending = Some((w2, h2));
-    }
-
     /// A pipeline's shader text as it stands this frame: the live
     /// text if a watched file has spoken it, the const compiled
     /// into the binary otherwise. The names are the table's in
     /// `crate::shaders`.
     fn wgsl(&self, name: &str) -> &str {
-        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+        #[cfg(debug_assertions)]
         if let Some(text) = self.shaders.get(name) {
             return text;
         }
@@ -2261,41 +2185,14 @@ impl<P: Process> Frost<P> {
     }
 
     fn render(&mut self) {
-        // Truth before events. winit's configure dedup drops a
-        // compositor configure that matches a wish we already sent
-        // through `request_inner_size` (source: `new_size !=
-        // self.inner_size()`), so a `Resized` event is not owed to
-        // us for every real move — yet the window HAS moved, and a
-        // surface behind it is a stretched picture inside a
-        // correct frame. Every frame therefore starts by checking
-        // the window's reported size against the surface's belief
-        // and reconfigures on disagreement; events stay the fast
-        // path, the loop stops trusting them alone.
         // The shader tier, first among equals: one poll per frame —
         // ten stats — before the surface is even asked, so a saved
-        // shader lands whether or not a window is compositing. A
+        // shader lands whether or not anything is compositing. A
         // passing batch rebuilds the pipelines next frame; the
         // game's state, buffers, and textures carry across untouched.
-        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+        #[cfg(debug_assertions)]
         if self.shaders.poll() {
             self.format = None;
-        }
-        if let Some(window) = self.window.clone() {
-            if let Some((w2, h2)) = self.aspect_pending.take() {
-                let _ = window.request_inner_size(PhysicalSize::new(w2, h2));
-            }
-            let size = window.inner_size();
-            if size.width > 0 && size.height > 0 {
-                let scale = (self.scale as f64).max(0.01);
-                let logical = (
-                    (size.width as f64 / scale).max(1.0).round() as u32,
-                    (size.height as f64 / scale).max(1.0).round() as u32,
-                );
-                if logical != self.logical_size && self.surface.is_some() {
-                    self.logical_size = logical;
-                    self.resize();
-                }
-            }
         }
         let (output, reconfigure) = self.acquire_frame();
         if reconfigure {
@@ -2353,7 +2250,6 @@ impl<P: Process> Frost<P> {
         let keys = &self.keys;
         let typed = &self.typed;
         let mouse_buttons = &self.mouse_buttons;
-        let gilrs = self.gilrs.as_ref();
         {
             let mut ctx = Context {
                 canvas: &mut canvas,
@@ -2365,21 +2261,15 @@ impl<P: Process> Frost<P> {
                 render_size: &mut self.render_size,
                 bloom: &mut self.bloom,
                 tone_map: &mut self.tone_map,
-                // The window is attached before the first frame renders, so
-                // this is `Some` for every frame the process sees; the
-                // `Option` is the type the field has before attach.
-                window: self.window.as_deref(),
                 expected_fps: self.expected_fps,
                 mouse,
                 mouse_buttons,
-                gilrs,
                 frame_processing_ms: self.frame_processing_ms,
                 frame_draw_calls: self.frame_draw_calls,
                 frame_diagnostic_draw_calls: self.frame_diagnostic_draw_calls,
                 mouse_wheel: self.mouse_wheel,
                 exit: &mut self.exit_requested,
                 keys_frozen: &mut self.keys_frozen,
-                close_requested: self.close_request,
             };
             process.process(&mut ctx, dt);
         }
@@ -2387,9 +2277,6 @@ impl<P: Process> Frost<P> {
         // so a frame that never reads it discards the delta rather than
         // leaking it into the next.
         self.mouse_wheel = 0.0;
-        // The close request belongs to the frame that just ran: what
-        // the process did not ask about is done asking.
-        self.close_request = false;
         // The user's process ran; now update the scene tree itself: every
         // node's `Node::process`, children before their parent.
         self.scene.visit();
@@ -3099,11 +2986,6 @@ impl<P: Process> Frost<P> {
         self.frame_diagnostic_draw_calls = diagnostic_draws;
         self.queue.present(output);
         log::trace!("render: frame presented");
-        // A `Context::set_vsync` in this frame's process moved the user's
-        // vsync request; this frame presented at the old mode, so the swap
-        // chain reconfigures now — between frames — and the next frame
-        // goes out at the new one. A no-op on every frame that saw no flip.
-        self.apply_vsync_change();
     }
 
     /// Acquires the current surface texture.
@@ -3164,10 +3046,10 @@ impl<P: Process> Frost<P> {
 
 /// Drives `future` on this thread until it completes.
 ///
-/// Native only: in the browser the main thread cannot block on a future,
-/// because the browser only resolves it once the thread is free. See
-/// [`run`].
-#[cfg(not(target_arch = "wasm32"))]
+/// The one await in the engine: the embedded startup asks an instance
+/// for an adapter (see [`crate::embedded::Embedded::new`]), a future that
+/// resolves on the spot on every native backend — nothing here ever
+/// awaits a frame, a present, or a device.
 pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
     let mut cx = TaskContext::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);

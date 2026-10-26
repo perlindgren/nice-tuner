@@ -52,10 +52,11 @@ This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
 ## Licensing
 
 - This plugin: MIT OR Apache-2.0.
-- `vendor/frost`: **upstream has no license** (README of perlindgren/frost says
-  all rights reserved pending a license decision). This fork is used for local
-  development; **obtain permission from the upstream authors before
-  distributing** any build that links it. The bundled FiraCode font is OFL.
+- `vendor/frost`: fork of perlindgren/frost, whose upstream is unlicensed
+  ("all rights reserved" pending a license decision). This repository is
+  maintained by one of the upstream authors, so use in this project is
+  authorized; redistribute the fork only under terms agreed with both upstream
+  authors. The bundled FiraCode font is OFL.
 
 ## Status
 

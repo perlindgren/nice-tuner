@@ -21,4 +21,4 @@ pub(crate) use frame::*;
 
 mod windowing;
 
-pub(crate) mod embed;
+pub mod embed;

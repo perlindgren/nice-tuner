@@ -38,8 +38,7 @@ pollster = "0.4"
 crossbeam = "0.8"
 # baseview 0.3.3 does not re-export it; its Event::Keyboard carries this type
 keyboard-types = "0.8.3"
-# M2/M5: pitch-detection DSP crate (uncomment once crates/pitch is in place)
-# pitch = { path = "crates/pitch" }
+pitch = { path = "crates/pitch" }
 # M3: frost fork (embedded renderer, winit run loop + rodio removed)
 # frost = { path = "vendor/frost" }
 
@@ -48,4 +47,4 @@ keyboard-types = "0.8.3"
 # packages; at final integration they become regular members via path deps
 # (see stage/integration_notes.md).
 members = ["xtask"]
-exclude = ["crates/pitch", "vendor/frost"]
+exclude = ["vendor/frost"]

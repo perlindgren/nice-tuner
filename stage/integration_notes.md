@@ -9,7 +9,7 @@ Apply once M2 (`crates/pitch`) and M3 (`vendor/frost` `frost::embedded`) are gre
 - [ ] bundle check: `cargo xtask bundle nice-tuner --release` → dist/ (.clap/.vst3 on macOS).
 
 ## Cargo.toml (root)
-- [ ] uncomment `pitch = { path = "crates/pitch" }` and `frost = { path = "vendor/frost" }`
+- [x] `pitch` dep LIVE (frost still pending) and `frost = { path = "vendor/frost" }`
 - [x] `keyboard-types = "0.8.3"` added to root Cargo.toml already (baseview 0.3.3 does NOT re-export it;
       `Event::Keyboard` carries `keyboard_types::KeyboardEvent{key,state,text,modifiers}`)
 - [x] baseview 0.3.3 event model verified from cached source:
@@ -33,7 +33,7 @@ Apply once M2 (`crates/pitch`) and M3 (`vendor/frost` `frost::embedded`) are gre
 - [ ] `mod gui; mod tuner_ui;` — gui.rs replaces the in-file `TunerWindow`
       (delete the triangle renderer + `Surface` struct; `TunerEditor::spawn`
       keeps using `TunerWindow::new` with the same signature).
-- [ ] `TunerPlugin`: add `detector: Option<pitch::PitchDetector>` field.
+- [x] DONE: detector field, activate() Config{30..2100Hz}, process() downmix+push (Block::get is block-relative, verified), freshness timestamp.
 - [ ] `activate()`: build `pitch::PitchDetector::new(Config { sample_rate:
       buffer_config.sample_rate as f64, min_freq: 30.0 /* 5-string bass B0 */,
       max_freq: 2100.0, ..Default::default() })`.
