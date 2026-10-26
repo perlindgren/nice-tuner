@@ -775,7 +775,11 @@ impl TunerUi {
             ("A4 reference", Dropdown::A4),
             ("Input gate", Dropdown::Gate),
         ];
-        let row_y = |i: usize| h / 2.0 - 46.0 * fit - i as f32 * 38.0 * fit;
+        // Rows 5+ (A4, gate) are the param block: an extra gap drops them
+        // below the audio block instead of running one uniform ladder.
+        let row_y = |i: usize| {
+            h / 2.0 - 46.0 * fit - i as f32 * 38.0 * fit - if i >= 5 { 26.0 } else { 0.0 } * fit
+        };
         let bx = w / 2.0 - 185.0 * fit; // value-button column
         let bhw = 165.0 * fit;
         let bhh = 14.0 * fit;
