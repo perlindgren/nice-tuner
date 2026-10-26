@@ -22,13 +22,16 @@ use std::sync::{Arc, atomic::Ordering};
 // Clarity gating lives in the detector (Config::min_clarity, audio thread);
 // the UI only freshness-gates + level-gates (see process()).
 /// cents → px on the gauge (±50 ¢ spans ±120 px)
-const CENTS_PX: f32 = 2.4;
+/// Pixels per cent on the needle gauge. The ±50¢ sweep covers
+/// ±50 × this in fit units (±240 at 4.8, inside the ±320 half-width);
+/// the ±3¢ green band therefore draws ±14.4 units wide.
+const CENTS_PX: f32 = 4.8;
 /// |cents| inside which we call it in tune, when latched
 /// Half-width of the in-tune band, in cents — drives both the green zone
-/// painted behind the needle and the color lock (within the band and
-/// stable → green). Comfortable strumming-tuner width; the measurement
-/// itself stays far more precise than this display band.
-const IN_TUNE_CENTS: f64 = 10.0;
+/// behind the needle and the color lock. Strict on purpose; the band's
+/// *pixel* width comes from CENTS_PX, so widening the draw never widens
+/// the verdict.
+const IN_TUNE_CENTS: f64 = 3.0;
 /// ms of continuous same-note stability before latching
 const LATCH_MS: f32 = 400.0;
 
@@ -98,8 +101,7 @@ pub struct TunerUi {
     cents_shown: f64,
     freq_shown: f64,
     stable_ms: f32,
-    green_t: f32,     // 0 = amber, 1 = green (lerped)
-    meter_level: f32, // decayed meter fill, 0..1
+    green_t: f32, // 0 = amber, 1 = green (lerped) // decayed meter fill, 0..1
     // ---- settings page (standalone-only UI; inert state elsewhere) ----
     page: Page,
     prev_mouse_down: bool,
@@ -150,7 +152,6 @@ impl TunerUi {
             freq_shown: 0.0,
             stable_ms: 0.0,
             green_t: 0.0,
-            meter_level: 0.0,
             page: Page::Main,
             prev_mouse_down: false,
             settings: Settings::default(),
@@ -400,28 +401,9 @@ impl Process for TunerUi {
             format!("———  ·  A4={:.0}", a4)
         };
         ctx.text(0.0, -104.0 * fit, font, freq_s, 39.6 * fit, 550.0, DIM, 0.2);
-        // meter fill over the static track (freshness-gated, then decayed:
-        // rms only updates on confident detections, so hold briefly and fade)
-        let lvl_target = if fresh {
-            ((rms_db - gate_db) / 60.0).clamp(0.0, 1.0) as f32
-        } else {
-            0.0
-        };
-        self.meter_level += (lvl_target - self.meter_level)
-            * if lvl_target > self.meter_level {
-                1.0
-            } else {
-                1.0 - (-dt / 0.3).exp()
-            };
-        let lvl = self.meter_level;
-        ctx.rectangle(
-            -160.0 * fit + 160.0 * fit * lvl,
-            -135.0 * fit,
-            160.0 * fit * lvl,
-            3.0 * fit,
-            main,
-            0.1,
-        );
+        // (meter bar removed per user feedback: drawn only while detections
+        // are fresh, it read as a stray divider line rather than a level
+        // meter — the needle and cents already carry the information)
     }
 }
 
