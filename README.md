@@ -47,6 +47,10 @@ target/debug/nice-tuner-standalone --backend asio --input-device "Komplete Input
 # upstream). If a libjack64.dll sits on PATH (Bitwig Studio ships one), you get
 # scary but harmless "cannot connect to named pipe server_jack_default_0" noise
 # before it falls back to WASAPI. Pin the backend to skip the probe entirely.
+
+# nice-plug's --input-latency default (150 ms of input-vs-output alignment
+# slack) is audibly wrong for a tuner; the standalone lowers it to 5 ms on
+# its own. Override either way with an explicit --input-latency.
 ```
 
 ### Producing plugin binaries
