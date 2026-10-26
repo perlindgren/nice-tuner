@@ -3,7 +3,10 @@ name = "frost"
 version = "0.1.0"
 edition = "2024"
 
-# cannot drift from the package's edition.
+# This package is its own workspace root: the embedding crate keeps its
+# own workspace, targets and lints apart from frost's. Edition 2024 asks
+# the resolver to be named explicitly, and the resolver version cannot
+# drift from the package's edition.
 resolver = "3"
 
 [dependencies]

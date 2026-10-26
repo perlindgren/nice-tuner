@@ -39,8 +39,11 @@ pub struct TunerWindow {
 }
 
 struct TunerEngine {
-    /// Owns the `wgpu::Surface` internally; resize/loss handled by `Embedded`.
+    /// Owns the `wgpu::Surface` internally; resize handled by `Embedded`.
+    /// A *lost* surface is detected via `Embedded::surface_lost()` and
+    /// repaired with `replace_surface(fresh, format)`.
     embedded: Embedded<crate::tuner_ui::TunerUi>,
+    format: wgpu::TextureFormat,
 }
 
 impl TunerWindow {
@@ -120,7 +123,7 @@ impl TunerWindow {
             EmbeddedConfig::default(),
         );
 
-        *self.engine.borrow_mut() = Some(TunerEngine { embedded });
+        *self.engine.borrow_mut() = Some(TunerEngine { embedded, format });
         Ok(())
     }
 }
@@ -133,7 +136,21 @@ impl WindowHandler for TunerWindow {
                 // SizeInvalid = zero-sized panel mid-collapse: nothing to
                 // draw, `resize` resumes. Never surface it to baseview — a
                 // HandlerError would tear the window down.
-                Ok(()) | Err(FrameError::SizeInvalid) => Ok(()),
+                Ok(()) | Err(FrameError::SizeInvalid) => {
+                    // frame() may return Ok while having drawn nothing: the
+                    // honest loss signal is surface_lost(). Repair in place
+                    // with a fresh surface over the still-live window.
+                    if engine.embedded.surface_lost() {
+                        let instance = wgpu::Instance::new(
+                            wgpu::InstanceDescriptor::new_without_display_handle(),
+                        );
+                        let fresh = instance
+                            .create_surface(self.window.platform_handle())
+                            .map_err(|e| HandlerError::from_boxed(e.to_string().into()))?;
+                        engine.embedded.replace_surface(fresh, engine.format);
+                    }
+                    Ok(())
+                }
                 // The device is gone: rebuild device+surface+scene wholesale;
                 // the baseview window itself is still alive.
                 Err(FrameError::DeviceLost) | Err(_) => {
@@ -177,13 +194,13 @@ impl WindowHandler for TunerWindow {
                     );
                 }
                 B::Mouse(mouse) => match mouse {
-                    // position arrives in PHYSICAL px (view.rs converts logical
-                    // NSView points via to_physical); frost wants logical, y-up.
+                    // baseview 0.3.3 macOS delivers PHYSICAL px (view.rs
+                    // to_physical); frost's set_cursor wants logical px,
+                    // y-down from the surface top-left -> just un-scale.
                     M::CursorMoved { position, .. } => {
-                        let h = size.logical.height as f64;
                         engine
                             .embedded
-                            .set_cursor(position.x / scale, h - position.y / scale);
+                            .set_cursor(position.x / scale, position.y / scale);
                     }
                     M::ButtonPressed { button, .. } => {
                         if let Some(btn) = crate::tuner_ui::map_mouse(button) {
@@ -196,11 +213,10 @@ impl WindowHandler for TunerWindow {
                         }
                     }
                     M::WheelScrolled { delta, .. } => {
+                        // frost's scroll dy is in LINES (raw); pixels /120
                         let (dx, dy) = match delta {
-                            baseview::ScrollDelta::Lines { x, y } => {
-                                (x as f64 * 40.0, y as f64 * 40.0)
-                            }
-                            baseview::ScrollDelta::Pixels { x, y } => (x as f64, y as f64),
+                            baseview::ScrollDelta::Lines { y, .. } => (0.0, y as f64),
+                            baseview::ScrollDelta::Pixels { y, .. } => (0.0, y as f64 / 120.0),
                         };
                         engine.embedded.scroll(dx, dy);
                     }

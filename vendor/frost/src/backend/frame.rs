@@ -1655,3 +1655,30 @@ fn write_occluder_record(
     *cursor = off + span;
     1
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::objects::Transform;
+
+    /// The occluder field's header spells its tallies in its first two
+    /// words, and the packer reports the same numbers beside the bytes:
+    /// the shader reads the header, the CPU reads the fields, and the two
+    /// must never disagree. One declared occluder and no lights is the
+    /// smallest frame that fills both numbers.
+    #[test]
+    fn the_field_header_says_what_the_packer_says() {
+        let declared = Occluder {
+            world: Transform::identity(),
+            center: [0.0, 0.0],
+            half: [32.0, 16.0],
+            polygon: None,
+            layers: LightLayers::default(),
+        };
+        let field = pack_occluder_field(&[], &[declared], [640.0, 360.0]);
+        assert_eq!((field.count, field.lights), (1, 0));
+        assert_eq!(&field.data[0..4], &field.count.to_le_bytes());
+        assert_eq!(&field.data[4..8], &field.lights.to_le_bytes());
+        assert!(field.data.len() >= OCCLUDER_FIELD_HEADER);
+    }
+}

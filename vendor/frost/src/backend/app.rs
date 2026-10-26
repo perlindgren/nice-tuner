@@ -1044,6 +1044,13 @@ impl<P: Process> Frost<P> {
         );
         self.surface = Some(surface);
         self.surface_format = Some(surface_format);
+        // The new chain has proven nothing yet: the format the old one
+        // settled on does not carry over, and until `reconfigure_surface`
+        // restates it every frame skips at the acquire guard below. A
+        // same-format re-attach rebuilds its pipelines once more here —
+        // the price of the honest `None` meaning "this chain has no
+        // format yet", and once per lost spell is nothing.
+        self.format = None;
         // A fresh chain is a fresh chance; the gone spell, if any, ends.
         self.surface_gone = None;
         log::info!(
@@ -2194,6 +2201,19 @@ impl<P: Process> Frost<P> {
         if self.shaders.poll() {
             self.format = None;
         }
+        // The rebuild a passing shader batch signs up for: a `None`
+        // format is the request, and the road is the one a surface-format
+        // change always took — reconfigure compares the surface's format
+        // against `format`, finds no match in `None`, and rebuilds every
+        // pipeline against the sources as they now stand. One reconfigure
+        // per edit, not per frame: the road ends by restating `format`.
+        // A surface that has never answered a configure sits at `None`
+        // too, so every frame retries it; while it keeps failing the
+        // frame is skipped below rather than acquiring an unconfigured
+        // surface, which wgpu would take as a panic.
+        if self.format.is_none() && self.surface.is_some() {
+            self.reconfigure_surface();
+        }
         let (output, reconfigure) = self.acquire_frame();
         if reconfigure {
             self.resize();
@@ -2994,6 +3014,14 @@ impl<P: Process> Frost<P> {
     /// because it is only suboptimal. A frame that gets no texture is counted
     /// rather than announced; see [`Self::surface_gone`].
     fn acquire_frame(&mut self) -> (Option<SurfaceTexture>, bool) {
+        // A chain that has never answered `configure` has no drawables to
+        // hand over — and wgpu takes the asking of an unconfigured surface
+        // as a panic, which no guest owes the host's main thread. The
+        // frame is skipped; the retry road in `render` is already working
+        // on the configure.
+        if self.format.is_none() {
+            return (None, false);
+        }
         let Some(surface) = self.surface.as_ref() else {
             return (None, false);
         };
