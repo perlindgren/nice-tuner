@@ -2,24 +2,41 @@
 
 use nice_plug::prelude::*;
 use nice_tuner::TunerPlugin;
-
-/// nice-plug's default `--input-latency` (0.15 s) buffers input against output
-/// as slack between its two independent device streams — a value chosen for
-/// general-purpose plugins on unreliable hardware, which on a live tuner is
-/// audible slap-back. Default the margin to 5 ms instead; an explicit
-/// `--input-latency` on the command line still wins.
-fn args_with_low_latency_default() -> Vec<String> {
-    let mut args: Vec<String> = std::env::args().collect();
-    let user_set_it = args
-        .iter()
-        .any(|a| a == "--input-latency" || a.starts_with("--input-latency="));
-    if !user_set_it {
-        args.insert(1, "--input-latency".to_owned());
-        args.insert(2, "0.005".to_owned());
-    }
-    args
-}
+use nice_tuner::settings::{self, Settings};
+use std::sync::atomic::Ordering;
 
 fn main() {
-    nice_export_standalone_with_args::<TunerPlugin, _>(args_with_low_latency_default());
+    nice_tuner::STANDALONE_MODE.store(true, Ordering::Relaxed);
+
+    let raw: Vec<String> = std::env::args().collect();
+    let (settings, warning) = Settings::load();
+    if let Some(warning) = warning {
+        eprintln!("nice-tuner: {warning}");
+    }
+    // Precedence: explicit command-line flags, then the settings file,
+    // then our defaults (nice-plug's 150 ms input-latency included).
+    let args = settings::effective_args(&settings, &raw);
+
+    nice_export_standalone_with_args::<TunerPlugin, _>(args);
+
+    // The settings page's "Apply & restart" unwinds the editor through a
+    // deliberate window close; honor it with a fresh process — new settings
+    // are read from the file at its startup, which is the point.
+    if nice_tuner::restart_requested() {
+        respawn(&raw);
+    }
+}
+
+fn respawn(raw: &[String]) -> ! {
+    let exe = std::env::current_exe().expect("locate own executable for restart");
+    match std::process::Command::new(exe)
+        .args(raw.iter().skip(1))
+        .spawn()
+    {
+        Ok(_child) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("nice-tuner: restart failed ({e}) — start the tuner again by hand");
+            std::process::exit(1);
+        }
+    }
 }

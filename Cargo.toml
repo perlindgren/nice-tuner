@@ -23,12 +23,15 @@ required-features = ["standalone"]
 default = []
 # Builds the standalone app binary (src/main.rs). Kept out of the default set
 # so the plugin (cdylib) builds do not pull in cpal/jack/midir.
-standalone = ["nice-plug/standalone"]
+standalone = ["nice-plug/standalone", "dep:cpal"]
 # Windows only (a no-op elsewhere; nice-plug gates all ASIO code on
 # target_os = "windows"). Compiles cpal's ASIO host into the standalone
 # binary and adds the `--backend asio` option. Without it, `--backend asio`
 # is not even a recognized value. Implies `standalone`.
-standalone-asio = ["standalone", "nice-plug/standalone-asio"]
+standalone-asio = ["standalone", "nice-plug/standalone-asio", "asio-host"]
+# cfg-visible alias for cpal/asio (cfg cannot test "cpal/asio" directly);
+# drives the ASIO arms in src/devices.rs.
+asio-host = ["cpal/asio"]
 
 [dependencies]
 nice-plug = { version = "0.4.2", default-features = false, features = [
@@ -47,6 +50,13 @@ pollster = "0.4"
 crossbeam = "0.8"
 # baseview 0.3.3 does not re-export it; its Event::Keyboard carries this type
 keyboard-types = "0.8.3"
+# Settings panel persistence (main thread only; never touched by the audio path)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Direct cpal dependency for device enumeration in the settings panel
+# (standalone only). Same version nice-plug resolves to; features are
+# additive on the unified dependency graph.
+cpal = { version = "0.18", optional = true }
 pitch = { path = "crates/pitch" }
 # M3: frost fork (embedded renderer, winit run loop + rodio removed)
 frost = { path = "vendor/frost" }

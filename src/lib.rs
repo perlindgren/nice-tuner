@@ -93,8 +93,29 @@ impl TunerSharedState {
 // ---------------------------------------------------------------------------------------------------
 // The embedded window: frost renderer hosted by baseview (src/gui.rs),
 // tuner scene + UI logic in src/tuner_ui.rs.
+#[cfg(feature = "standalone")]
+pub mod devices;
 mod gui;
+pub mod settings;
 mod tuner_ui;
+
+/// True when running as the standalone app (set by its `main` before the
+/// plugin is instantiated). The settings panel is standalone-only: a host
+/// owns the audio system inside a DAW, so device choices would lie there.
+pub static STANDALONE_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Raised by the settings page's "Apply & restart"; the standalone entry
+/// respawns the process when the run unwinds. Never raised inside a host —
+/// the page that sets it does not exist there.
+static RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+pub fn request_restart() {
+    RESTART_REQUESTED.store(true, Ordering::Relaxed);
+}
+
+pub fn restart_requested() -> bool {
+    RESTART_REQUESTED.load(Ordering::Relaxed)
+}
 
 // ---------------------------------------------------------------------------------------------------
 // Editor + handle (nice-plug integration)

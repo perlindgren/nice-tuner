@@ -75,6 +75,27 @@ This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
 - **Winit is absent from the runtime path**: `vendor/frost` keeps winit only for
   event *data types*; constructing an `EventLoop` is grep-gated out of the tree.
 
+## Settings panel (standalone)
+
+The standalone app's tuner screen has a `SETTINGS` button (top-right) opening a
+panel for **backend, sample rate, buffer size, and input/output devices** —
+device dropdowns are enumerated live via cpal (ASIO appears only in builds with
+`--features standalone-asio`; enumeration loads each registered ASIO driver, so
+the first open can pause a moment where several are installed).
+
+- **Persistence**: `APPLY & RESTART` writes `nice-tuner-settings.json` to the
+  **current directory**; it is read again at every startup.
+- **Applied directly** = save + automatic process respawn (~a blink). It is a
+  respawn because nice-plug's standalone wrapper owns the audio stream — a
+  plugin cannot reconfigure it from inside (same ownership story as
+  [RustAudio/nice-plug#93](https://codeberg.org/RustAudio/nice-plug/issues/93)
+  below).
+- **Precedence**: command-line flags > settings file > defaults (including our
+  5 ms `--input-latency` default).
+- **Inside a DAW there is deliberately no panel** (the footer reads
+  `audio: host-managed`): the host owns the audio device; a per-plugin device
+  picker would lie.
+
 ## Licensing
 
 - This plugin: MIT OR Apache-2.0.
@@ -93,6 +114,8 @@ This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
 - [x] M4 baseview→frost adapter (`src/gui.rs`) + tuner scene (`src/tuner_ui.rs`)
 - [x] M5 DSP→GUI wiring (analysis gated on editor open; shared atomics, zero RT allocs)
 - [x] M6 `scripts/check.sh` all gates green, incl. `Nice Tuner.clap`/`.vst3` bundling
+- [x] Standalone settings panel: backend/device/buffer dropdowns, JSON in CWD,
+      apply-by-respawn; host-managed honesty inside DAWs
 
 ## Upstream improvements we're tracking
 

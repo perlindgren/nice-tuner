@@ -14,6 +14,7 @@
 //! ```
 
 use crate::TunerSharedState;
+use crate::settings::Settings;
 use frost::{Color, Context, Process, Scene, SceneNode, Shape};
 use pitch::freq_to_note;
 use std::sync::{Arc, atomic::Ordering};
@@ -40,6 +41,8 @@ const AMBER: Color = rgb(0xe8, 0xa3, 0x3d);
 const GREEN: Color = rgb(0x4a, 0xde, 0x80);
 const DIM: Color = rgb(0x6b, 0x72, 0x80);
 const TRACK: Color = rgb(0x2a, 0x24, 0x3d);
+const HOVER: Color = rgb(0x3a, 0x33, 0x4f);
+const FG: Color = rgb(0xe6, 0xe6, 0xea);
 
 /// Static chrome: background, gauge tick marks, meter track. Rebuilt never;
 /// everything that moves is drawn immediately in [`TunerUi::process`].
@@ -90,6 +93,19 @@ pub struct TunerUi {
     stable_ms: f32,
     green_t: f32,     // 0 = amber, 1 = green (lerped)
     meter_level: f32, // decayed meter fill, 0..1
+    // ---- settings page (standalone-only UI; inert state elsewhere) ----
+    page: Page,
+    prev_mouse_down: bool,
+    settings: Settings,
+    settings_loaded: bool,
+    open_dropdown: Option<Dropdown>,
+    list_scroll: f32,
+    backend_opts: Vec<(String, String)>,
+    input_opts: Vec<String>,
+    output_opts: Vec<String>,
+    rate_opts: Vec<String>,
+    buffer_opts: Vec<String>,
+    save_note: Option<String>,
 }
 
 impl TunerUi {
@@ -106,6 +122,18 @@ impl TunerUi {
             stable_ms: 0.0,
             green_t: 0.0,
             meter_level: 0.0,
+            page: Page::Main,
+            prev_mouse_down: false,
+            settings: Settings::default(),
+            settings_loaded: false,
+            open_dropdown: None,
+            list_scroll: 0.0,
+            backend_opts: Vec::new(),
+            input_opts: Vec::new(),
+            output_opts: Vec::new(),
+            rate_opts: Vec::new(),
+            buffer_opts: Vec::new(),
+            save_note: None,
         }
     }
 }
@@ -181,6 +209,57 @@ impl Process for TunerUi {
         // ---- draw (Context derefs to Canvas) -------------------------------
         let (w, h) = ctx.size();
         let fit = (w / 640.0).min(h / 400.0).max(0.35);
+
+        // Mouse edge + page routing. The settings page exists only in the
+        // standalone app: inside a host, the host owns the audio system.
+        let down = ctx.mouse_button_down(frost::MouseButton::Left);
+        let clicked = down && !self.prev_mouse_down;
+        self.prev_mouse_down = down;
+        if self.page == Page::Settings {
+            self.process_settings_page(ctx, clicked);
+            return;
+        }
+        if crate::STANDALONE_MODE.load(Ordering::Relaxed) {
+            let gx = w / 2.0 - 62.0 * fit;
+            let gy = h / 2.0 - 18.0 * fit;
+            let hov = point_in(ctx.mouse_position(), gx, gy, 50.0 * fit, 11.0 * fit);
+            ctx.rectangle(
+                gx,
+                gy,
+                50.0 * fit,
+                11.0 * fit,
+                if hov { HOVER } else { TRACK },
+                0.4,
+            );
+            ctx.text(
+                gx,
+                gy,
+                &self.font,
+                "SETTINGS",
+                11.0 * fit,
+                500.0,
+                if hov { AMBER } else { DIM },
+                0.41,
+            );
+            if hov && clicked {
+                self.open_settings_page();
+                return;
+            }
+        }
+        if !crate::STANDALONE_MODE.load(Ordering::Relaxed) {
+            // Inside a host there is no settings page on purpose: the host
+            // owns the device, a per-plugin device picker would lie.
+            ctx.text(
+                -w / 2.0 + 78.0 * fit,
+                h / 2.0 - 16.0 * fit,
+                &self.font,
+                "audio: host-managed",
+                10.0 * fit,
+                400.0,
+                DIM,
+                0.4,
+            );
+        }
         let font = &self.font;
         let x = self.needle_cents * CENTS_PX * fit;
 
@@ -313,4 +392,437 @@ pub fn map_mouse(button: baseview::MouseButton) -> Option<frost::MouseButton> {
         baseview::MouseButton::Middle => frost::MouseButton::Middle,
         _ => return None,
     })
+}
+
+// ============================================================================
+// Settings page — backend/device/buffer configuration for the standalone app.
+// Hand-rolled widgets on frost's immediate canvas (rectangles + text + mouse
+// edges); the static scene underneath is page-agnostic.
+// ============================================================================
+
+#[derive(Clone, Copy, PartialEq)]
+enum Page {
+    Main,
+    Settings,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Dropdown {
+    Backend,
+    Rate,
+    Buffer,
+    Input,
+    Output,
+}
+
+fn point_in(p: Option<[f32; 2]>, cx: f32, cy: f32, hw: f32, hh: f32) -> bool {
+    p.is_some_and(|[x, y]| (x - cx).abs() <= hw && (y - cy).abs() <= hh)
+}
+
+fn clip(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_owned()
+    } else {
+        format!("{}…", s.chars().take(n - 1).collect::<String>())
+    }
+}
+
+fn fmt_rate(r: f32) -> String {
+    if r.fract() == 0.0 {
+        format!("{} Hz", r as u32)
+    } else {
+        format!("{r:.1} Hz")
+    }
+}
+
+const VISIBLE_ITEMS: usize = 8;
+
+impl TunerUi {
+    fn open_settings_page(&mut self) {
+        if !self.settings_loaded {
+            let (settings, warning) = Settings::load();
+            self.settings = settings;
+            self.save_note = warning;
+            #[cfg(feature = "standalone")]
+            {
+                self.backend_opts = crate::devices::available_backends()
+                    .into_iter()
+                    .map(|b| (b.id, b.label))
+                    .collect();
+            }
+            self.refresh_devices();
+            self.settings_loaded = true;
+        }
+        self.open_dropdown = None;
+        self.page = Page::Settings;
+    }
+
+    fn backend_key(&self) -> &str {
+        self.settings.backend.as_deref().unwrap_or("auto")
+    }
+
+    /// (Re-)enumerate devices for the selected backend; selections that the
+    /// new backend cannot offer fall back to "(system default)".
+    fn refresh_devices(&mut self) {
+        // Owned: the refresh below mutates self while enumerating from b.
+        let b = self.backend_key().to_owned();
+        #[cfg(not(feature = "standalone"))]
+        let _ = &b; // plugin build has no devices module to feed
+        #[cfg(feature = "standalone")]
+        {
+            self.input_opts = crate::devices::list_input_devices(&b);
+            self.output_opts = crate::devices::list_output_devices(&b);
+        }
+        if let Some(d) = &self.settings.input_device
+            && !self.input_opts.contains(d)
+        {
+            self.settings.input_device = None;
+        }
+        if let Some(d) = &self.settings.output_device
+            && !self.output_opts.contains(d)
+        {
+            self.settings.output_device = None;
+        }
+        self.refresh_stream_options();
+    }
+
+    fn refresh_stream_options(&mut self) {
+        #[cfg(feature = "standalone")]
+        {
+            let backend = self.backend_key().to_owned();
+            let device = self.settings.input_device.clone();
+            let (rates, buffers) = crate::devices::stream_options(&backend, device.as_deref());
+            self.rate_opts = rates.iter().map(|r| fmt_rate(*r)).collect();
+            self.buffer_opts = buffers.iter().map(|b| b.to_string()).collect();
+        }
+    }
+
+    fn dropdown_items(&self, dd: Dropdown) -> Vec<String> {
+        let with_default = |v: &Vec<String>| {
+            std::iter::once("(default)".to_owned())
+                .chain(v.iter().cloned())
+                .collect::<Vec<_>>()
+        };
+        match dd {
+            Dropdown::Backend => self.backend_opts.iter().map(|(_, l)| l.clone()).collect(),
+            Dropdown::Input => with_default(&self.input_opts),
+            Dropdown::Output => with_default(&self.output_opts),
+            Dropdown::Rate => with_default(&self.rate_opts),
+            Dropdown::Buffer => with_default(&self.buffer_opts),
+        }
+    }
+
+    fn selected_index(&self, dd: Dropdown) -> usize {
+        let pick_opt = |list: &Vec<String>, saved: &Option<String>| {
+            saved
+                .as_ref()
+                .and_then(|d| list.iter().position(|x| x == d))
+                .map_or(0, |i| i + 1)
+        };
+        match dd {
+            Dropdown::Backend => self
+                .backend_opts
+                .iter()
+                .position(|(id, _)| id == self.backend_key())
+                .unwrap_or(0),
+            Dropdown::Input => pick_opt(&self.input_opts, &self.settings.input_device),
+            Dropdown::Output => pick_opt(&self.output_opts, &self.settings.output_device),
+            Dropdown::Rate => self
+                .settings
+                .sample_rate
+                .and_then(|r| self.rate_opts.iter().position(|s| *s == fmt_rate(r)))
+                .map_or(0, |i| i + 1),
+            Dropdown::Buffer => self
+                .settings
+                .period_size
+                .and_then(|p| self.buffer_opts.iter().position(|s| *s == p.to_string()))
+                .map_or(0, |i| i + 1),
+        }
+    }
+
+    fn pick(&mut self, dd: Dropdown, idx: usize) {
+        match dd {
+            Dropdown::Backend => {
+                if let Some((id, _)) = self.backend_opts.get(idx) {
+                    let id = id.clone();
+                    self.settings.backend = if id == "auto" { None } else { Some(id) };
+                    self.refresh_devices();
+                }
+            }
+            Dropdown::Input => {
+                self.settings.input_device = if idx == 0 {
+                    None
+                } else {
+                    self.input_opts.get(idx - 1).cloned()
+                };
+                self.refresh_stream_options();
+            }
+            Dropdown::Output => {
+                self.settings.output_device = if idx == 0 {
+                    None
+                } else {
+                    self.output_opts.get(idx - 1).cloned()
+                };
+            }
+            Dropdown::Rate => {
+                self.settings.sample_rate = if idx == 0 {
+                    None
+                } else {
+                    self.rate_opts
+                        .get(idx - 1)
+                        .and_then(|s| s.split(' ').next())
+                        .and_then(|t| t.parse().ok())
+                };
+            }
+            Dropdown::Buffer => {
+                self.settings.period_size = if idx == 0 {
+                    None
+                } else {
+                    self.buffer_opts.get(idx - 1).and_then(|s| s.parse().ok())
+                };
+            }
+        }
+        self.open_dropdown = None;
+        self.list_scroll = 0.0;
+    }
+
+    fn current_value_label(&self, dd: Dropdown) -> String {
+        match dd {
+            Dropdown::Backend => self
+                .backend_opts
+                .iter()
+                .find(|(id, _)| id == self.backend_key())
+                .map(|(_, l)| l.clone())
+                .unwrap_or_else(|| self.backend_key().to_owned()),
+            Dropdown::Rate => self
+                .settings
+                .sample_rate
+                .map(fmt_rate)
+                .unwrap_or_else(|| "(default)".into()),
+            Dropdown::Buffer => self
+                .settings
+                .period_size
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "(default)".into()),
+            Dropdown::Input => self
+                .settings
+                .input_device
+                .as_deref()
+                .map(|d| clip(d, 26))
+                .unwrap_or_else(|| "(system default)".into()),
+            Dropdown::Output => self
+                .settings
+                .output_device
+                .as_deref()
+                .map(|d| clip(d, 26))
+                .unwrap_or_else(|| "(system default)".into()),
+        }
+    }
+
+    fn process_settings_page(&mut self, ctx: &mut Context, clicked: bool) {
+        let (w, h) = ctx.size();
+        let fit = (w / 720.0).min(h / 440.0).max(0.45);
+        let mouse = ctx.mouse_position();
+        let font = std::sync::Arc::clone(&self.font);
+        let z = 0.4f32;
+
+        const ROWS: [(&str, Dropdown); 5] = [
+            ("Backend", Dropdown::Backend),
+            ("Sample rate", Dropdown::Rate),
+            ("Buffer (frames)", Dropdown::Buffer),
+            ("Input device", Dropdown::Input),
+            ("Output device", Dropdown::Output),
+        ];
+        let row_y = |i: usize| h / 2.0 - 84.0 * fit - i as f32 * 42.0 * fit;
+        let bx = w / 2.0 - 185.0 * fit; // value-button column
+        let bhw = 165.0 * fit;
+        let bhh = 14.0 * fit;
+
+        // Wheel scrolls the open dropdown.
+        if let Some(dd) = self.open_dropdown {
+            let n = self.dropdown_items(dd).len();
+            let max_scroll = n.saturating_sub(VISIBLE_ITEMS) as f32;
+            self.list_scroll = (self.list_scroll + ctx.mouse_wheel() * 0.5).clamp(0.0, max_scroll);
+        }
+
+        ctx.text(
+            0.0,
+            h / 2.0 - 30.0 * fit,
+            &font,
+            "AUDIO SETTINGS",
+            19.0 * fit,
+            700.0,
+            AMBER,
+            z,
+        );
+        for (i, (label, dd)) in ROWS.iter().enumerate() {
+            let y = row_y(i);
+            let open = self.open_dropdown == Some(*dd);
+            let hov = point_in(mouse, bx, y, bhw, bhh);
+            ctx.text(
+                -w / 2.0 + 105.0 * fit,
+                y,
+                &font,
+                *label,
+                14.0 * fit,
+                400.0,
+                DIM,
+                z,
+            );
+            ctx.rectangle(bx, y, bhw, bhh, if open || hov { HOVER } else { TRACK }, z);
+            ctx.text(
+                bx,
+                y,
+                &font,
+                self.current_value_label(*dd),
+                13.0 * fit,
+                400.0,
+                if hov || open { AMBER } else { FG },
+                z + 0.01,
+            );
+        }
+
+        // Bottom actions.
+        let by = -h / 2.0 + 30.0 * fit;
+        let back = point_in(mouse, -w / 2.0 + 90.0 * fit, by, 65.0 * fit, 15.0 * fit);
+        let apply = point_in(mouse, w / 2.0 - 120.0 * fit, by, 110.0 * fit, 15.0 * fit);
+        ctx.rectangle(
+            -w / 2.0 + 90.0 * fit,
+            by,
+            65.0 * fit,
+            15.0 * fit,
+            if back { HOVER } else { TRACK },
+            z,
+        );
+        ctx.text(
+            -w / 2.0 + 90.0 * fit,
+            by,
+            &font,
+            "BACK",
+            13.0 * fit,
+            500.0,
+            if back { AMBER } else { FG },
+            z + 0.01,
+        );
+        ctx.rectangle(
+            w / 2.0 - 120.0 * fit,
+            by,
+            110.0 * fit,
+            15.0 * fit,
+            if apply { HOVER } else { TRACK },
+            z,
+        );
+        ctx.text(
+            w / 2.0 - 120.0 * fit,
+            by,
+            &font,
+            "APPLY & RESTART",
+            13.0 * fit,
+            600.0,
+            if apply { AMBER } else { GREEN },
+            z + 0.01,
+        );
+
+        match &self.save_note {
+            Some(note) => ctx.text(
+                0.0,
+                by + 34.0 * fit,
+                &font,
+                clip(note, 90),
+                12.0 * fit,
+                400.0,
+                AMBER,
+                z,
+            ),
+            None => ctx.text(
+                0.0,
+                by + 34.0 * fit,
+                &font,
+                format!(
+                    "saved to {} · Apply restarts the tuner",
+                    crate::settings::FILE_NAME
+                ),
+                11.0 * fit,
+                400.0,
+                DIM,
+                z,
+            ),
+        }
+
+        // Open dropdown: drawn last (on top), items hit first.
+        if let Some(dd) = self.open_dropdown {
+            let items = self.dropdown_items(dd);
+            let row = ROWS.iter().position(|(_, d)| *d == dd).unwrap_or(0);
+            let ih = 13.0 * fit;
+            let step = ih * 2.0 + 5.0 * fit;
+            let skip = self.list_scroll as usize;
+            for (idx, label) in items
+                .iter()
+                .enumerate()
+                .skip(skip)
+                .take(VISIBLE_ITEMS)
+                .collect::<Vec<_>>()
+            {
+                let iy = row_y(row) - (idx as f32 - self.list_scroll) * step - ih - 8.0 * fit;
+                let sel = self.selected_index(dd) == idx;
+                let hov = point_in(mouse, bx, iy, bhw, ih);
+                ctx.rectangle(
+                    bx,
+                    iy,
+                    bhw,
+                    ih,
+                    if hov {
+                        HOVER
+                    } else {
+                        Color {
+                            a: 0.96,
+                            r: BG.r + 0.05,
+                            g: BG.g + 0.05,
+                            b: BG.b + 0.07,
+                        }
+                    },
+                    z + 0.05,
+                );
+                ctx.text(
+                    bx,
+                    iy,
+                    &font,
+                    clip(label, 36),
+                    12.5 * fit,
+                    if sel { 700.0 } else { 400.0 },
+                    if sel { GREEN } else { FG },
+                    z + 0.06,
+                );
+                if clicked && hov {
+                    self.pick(dd, idx);
+                    return;
+                }
+            }
+        }
+
+        if clicked {
+            if self.open_dropdown.is_some() {
+                self.open_dropdown = None;
+                self.list_scroll = 0.0;
+            } else {
+                for (i, (_, dd)) in ROWS.iter().enumerate() {
+                    if point_in(mouse, bx, row_y(i), bhw, bhh) {
+                        self.open_dropdown = Some(*dd);
+                        self.list_scroll = 0.0;
+                        break;
+                    }
+                }
+                if back {
+                    self.page = Page::Main;
+                    self.save_note = None;
+                }
+                if apply {
+                    match self.settings.save() {
+                        Ok(()) => crate::request_restart(),
+                        Err(e) => self.save_note = Some(format!("save failed: {e}")),
+                    }
+                }
+            }
+        }
+    }
 }

@@ -139,6 +139,12 @@ impl TunerWindow {
 
 impl WindowHandler for TunerWindow {
     fn on_frame(&self) -> Result<(), HandlerError> {
+        // Settings-page "Apply & restart" (standalone): unwind the editor
+        // with a deliberate close; nice-plug's wrapper tears down cleanly on
+        // the way out and main() respawns us with the saved settings.
+        if crate::restart_requested() {
+            return Err(HandlerError::from_boxed("restart requested".into()));
+        }
         let mut guard = self.engine.borrow_mut();
         match guard.as_mut() {
             Some(engine) => match engine.embedded.frame() {

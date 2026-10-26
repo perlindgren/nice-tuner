@@ -3,3 +3,6 @@ target/
 *.clap
 *.vst3
 dist/
+
+# written by the standalone app when run from a repo checkout
+nice-tuner-settings.json

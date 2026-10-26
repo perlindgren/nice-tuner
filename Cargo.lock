@@ -1770,12 +1770,15 @@ name = "nice-tuner"
 version = "0.1.0"
 dependencies = [
  "baseview",
+ "cpal",
  "crossbeam",
  "frost",
  "keyboard-types",
  "nice-plug",
  "pitch",
  "pollster",
+ "serde",
+ "serde_json",
  "wgpu",
 ]
 

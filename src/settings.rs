@@ -1,0 +1,199 @@
+//! Standalone audio-settings persistence and argv synthesis.
+//!
+//! nice-plug's standalone wrapper builds its audio streams from the parsed
+//! CLI config before the plugin exists, and tears them down when the editor
+//! closes — it cannot be reconfigured from inside the plugin. So the settings
+//! panel persists changes here and the standalone entry respawns the process:
+//! from the user's seat, a blink. Hosts never consult these values — in a
+//! DAW the host owns the device — so the settings page does not exist there.
+
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+/// Read from and written to the process's working directory.
+pub const FILE_NAME: &str = "nice-tuner-settings.json";
+
+/// nice-plug's own `--input-latency` default (150 ms) is audible slap-back
+/// for a live tuner; we stand in with this when neither the command line nor
+/// the settings file has an opinion.
+pub const OUR_INPUT_LATENCY_DEFAULT: f32 = 0.005;
+
+/// Audio-system settings mirroring nice-plug's standalone CLI options.
+/// `None` means "not set here" — the command line wins, then nice-plug's
+/// own default (or our input-latency override above).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    /// A nice-plug `BackendType` value: `auto`, `jack`, `alsa`, `coreaudio`,
+    /// `wasapi`, `asio`, `dummy`.
+    pub backend: Option<String>,
+    /// Exact cpal device name — for ASIO, the ASIO *driver* name
+    /// ("Komplete Input 1/2"), not a port/endpoint name.
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
+    pub sample_rate: Option<f32>,
+    pub period_size: Option<u32>,
+    /// The alignment slack, in seconds, nice-plug inserts between its
+    /// independent input and output streams.
+    pub input_latency: Option<f32>,
+}
+
+impl Settings {
+    pub fn path() -> PathBuf {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(FILE_NAME)
+    }
+
+    /// A missing file is the default; a corrupt file is the default plus a
+    /// warning to show. Startup must never depend on a file that can rot.
+    pub fn load() -> (Settings, Option<String>) {
+        match std::fs::read_to_string(Self::path()) {
+            Err(_) => (Settings::default(), None),
+            Ok(text) if text.trim().is_empty() => (Settings::default(), None),
+            Ok(text) => match serde_json::from_str::<Settings>(&text) {
+                Ok(s) => (s, None),
+                Err(e) => (
+                    Settings::default(),
+                    Some(format!(
+                        "ignoring unreadable {}: {e}",
+                        Self::path().display()
+                    )),
+                ),
+            },
+        }
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        std::fs::write(Self::path(), text).map_err(|e| format!("{}: {e}", Self::path().display()))
+    }
+}
+
+/// Does `raw` already carry this option (long flag or any short form)?
+fn cli_has(raw: &[String], flag: &str, shorts: &[&str]) -> bool {
+    raw.iter()
+        .any(|a| a == flag || shorts.iter().any(|s| a == s))
+}
+
+fn format_rate(r: f32) -> String {
+    if r.fract() == 0.0 {
+        format!("{}", r as u32)
+    } else {
+        r.to_string()
+    }
+}
+
+/// Synthesize the argv handed to nice-plug's clap parser. Precedence:
+/// explicit command-line flags, then the settings file, then our defaults.
+/// `raw` includes argv[0] (the parser expects it).
+pub fn effective_args(settings: &Settings, raw: &[String]) -> Vec<String> {
+    let mut args: Vec<String> = raw.to_vec();
+    let mut push = |flag: &str, value: String| {
+        args.push(flag.to_owned());
+        args.push(value);
+    };
+
+    if let Some(b) = settings
+        .backend
+        .as_deref()
+        .filter(|_| !cli_has(raw, "--backend", &["-b"]))
+    {
+        push("--backend", b.to_owned());
+    }
+    if let Some(d) = settings
+        .input_device
+        .as_deref()
+        .filter(|_| !cli_has(raw, "--input-device", &[]))
+    {
+        push("--input-device", d.to_owned());
+    }
+    if let Some(d) = settings
+        .output_device
+        .as_deref()
+        .filter(|_| !cli_has(raw, "--output-device", &[]))
+    {
+        push("--output-device", d.to_owned());
+    }
+    if let Some(r) = settings
+        .sample_rate
+        .filter(|_| !cli_has(raw, "--sample-rate", &["-r"]))
+    {
+        push("--sample-rate", format_rate(r));
+    }
+    if let Some(p) = settings
+        .period_size
+        .filter(|_| !cli_has(raw, "--period-size", &["-p"]))
+    {
+        push("--period-size", p.to_string());
+    }
+    if settings
+        .input_latency
+        .filter(|_| !cli_has(raw, "--input-latency", &[]))
+        .is_some()
+    {
+        let l = settings.input_latency.unwrap();
+        push("--input-latency", l.to_string());
+    } else if !cli_has(raw, "--input-latency", &[]) {
+        push("--input-latency", OUR_INPUT_LATENCY_DEFAULT.to_string());
+    }
+    args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_line_beats_settings_file() {
+        let s = Settings {
+            period_size: Some(64),
+            ..Default::default()
+        };
+        let raw = vec!["nice-tuner".to_owned(), "-p".to_owned(), "128".to_owned()];
+        let args = effective_args(&s, &raw);
+        // The file's 64 must not appear; the user's 128 must.
+        assert!(!args.iter().any(|a| a == "64"));
+        let p = args.iter().position(|a| a == "-p").unwrap();
+        assert_eq!(args[p + 1], "128");
+    }
+
+    #[test]
+    fn settings_file_beats_our_input_latency_default() {
+        let s = Settings {
+            input_latency: Some(0.02),
+            ..Default::default()
+        };
+        let args = effective_args(&s, &["x".to_owned()]);
+        let i = args.iter().position(|a| a == "--input-latency").unwrap();
+        assert_eq!(args[i + 1], "0.02");
+        assert!(!args.iter().any(|a| a == "0.005"));
+    }
+
+    #[test]
+    fn no_opinions_yet_yields_our_default_latency_only() {
+        let args = effective_args(&Settings::default(), &["x".to_owned()]);
+        let i = args.iter().position(|a| a == "--input-latency").unwrap();
+        assert_eq!(args[i + 1], "0.005");
+        // No other flags invented.
+        assert_eq!(args.len(), 3);
+    }
+
+    #[test]
+    fn json_round_trip_and_lenient_reading() {
+        let s = Settings {
+            backend: Some("asio".into()),
+            input_device: Some("Komplete Input 1/2".into()),
+            period_size: Some(64),
+            ..Default::default()
+        };
+        let text = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, s);
+        // Unknown fields ignored, missing fields None — forward compatible.
+        let loose: Settings =
+            serde_json::from_str(r#"{"backend":"wasapi","future_thing":42}"#).unwrap();
+        assert_eq!(loose.backend.as_deref(), Some("wasapi"));
+        assert_eq!(loose.period_size, None);
+    }
+}
