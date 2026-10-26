@@ -574,8 +574,10 @@ impl TunerUi {
         #[cfg(feature = "standalone")]
         {
             let backend = self.backend_key().to_owned();
-            let device = self.settings.input_device.clone();
-            let (rates, buffers) = crate::devices::stream_options(&backend, device.as_deref());
+            let input = self.settings.input_device.clone();
+            let output = self.settings.output_device.clone();
+            let (rates, buffers) =
+                crate::devices::stream_options(&backend, input.as_deref(), output.as_deref());
             self.rate_opts = rates.iter().map(|r| fmt_rate(*r)).collect();
             self.buffer_opts = buffers.iter().map(|b| b.to_string()).collect();
         }
@@ -657,6 +659,9 @@ impl TunerUi {
                 } else {
                     self.output_opts.get(idx - 1).cloned()
                 };
+                // Duplex constraint: the output device narrows the buffer
+                // range too — recompute.
+                self.refresh_stream_options();
             }
             Dropdown::Rate => {
                 self.settings.sample_rate = if idx == 0 {

@@ -121,37 +121,55 @@ fn find_device(backend: &str, name: &str) -> Option<cpal::Device> {
 }
 
 const DEFAULT_RATES: [f32; 4] = [44100.0, 48000.0, 88200.0, 96000.0];
-const BUFFER_CANDIDATES: [u32; 9] = [32, 48, 64, 96, 128, 256, 512, 1024, 2048];
+/// Every size offered when the device permits it — the ladder reaches from
+/// the 8-frame floors real ASIO control panels use up to 4096.
+const BUFFER_CANDIDATES: [u32; 16] = [
+    8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 2048, 4096,
+];
 
 /// Sample rates (Hz) and buffer sizes (frames) to offer for the given
-/// backend/device. Unknown or unspecified devices get sensible menus:
-/// common rates and 64–1024 buffers.
-pub fn stream_options(backend: &str, device: Option<&str>) -> (Vec<f32>, Vec<u32>) {
-    let Some(device) = device.and_then(|want| find_device(backend, want)) else {
+/// backend/devices. Values come from the *real* driver: cpal queries each
+/// device's supported configs (for ASIO that is `ASIOGetBufferSize`, via
+/// cpal's `driver.buffersize_range()`). Buffer bounds are the INTERSECTION
+/// of the input and output devices' reported ranges — a duplex session must
+/// satisfy both. Unknown ranges (drivers that do not report) impose no
+/// constraint; a device-less choice (e.g. `auto`) falls back to defaults.
+pub fn stream_options(
+    backend: &str,
+    input: Option<&str>,
+    output: Option<&str>,
+) -> (Vec<f32>, Vec<u32>) {
+    let in_dev = input.and_then(|want| find_device(backend, want));
+    let out_dev = output.and_then(|want| find_device(backend, want));
+    if in_dev.is_none() && out_dev.is_none() {
         return (DEFAULT_RATES.to_vec(), vec![64, 128, 256, 512, 1024]);
-    };
-    let configs = device
-        .supported_input_configs()
-        .map(|c| c.collect::<Vec<_>>())
-        .unwrap_or_default();
+    }
 
+    let in_cfgs = in_dev
+        .as_ref()
+        .and_then(|d| d.supported_input_configs().ok())
+        .map(|c| c.collect::<Vec<_>>());
+    let out_cfgs = out_dev
+        .as_ref()
+        .and_then(|d| d.supported_output_configs().ok())
+        .map(|c| c.collect::<Vec<_>>());
+
+    // Rates: from the input device when present (it is the one we tune with),
+    // else from the output device.
+    let rate_src = in_cfgs.as_ref().or(out_cfgs.as_ref());
     let mut rates: Vec<f32> = Vec::new();
-    let mut buf_min = u32::MAX;
-    let mut buf_max = 0u32;
-    for c in &configs {
-        let (lo, hi) = (c.min_sample_rate(), c.max_sample_rate());
-        if lo == hi {
-            rates.push(lo as f32);
-        } else {
-            rates.extend(
-                DEFAULT_RATES
-                    .into_iter()
-                    .filter(|r| *r >= lo as f32 && *r <= hi as f32),
-            );
-        }
-        if let cpal::SupportedBufferSize::Range { min, max } = c.buffer_size() {
-            buf_min = buf_min.min(*min);
-            buf_max = buf_max.max(*max);
+    if let Some(cfgs) = rate_src {
+        for c in cfgs {
+            let (lo, hi) = (c.min_sample_rate(), c.max_sample_rate());
+            if lo == hi {
+                rates.push(lo as f32);
+            } else {
+                rates.extend(
+                    DEFAULT_RATES
+                        .into_iter()
+                        .filter(|r| *r >= lo as f32 && *r <= hi as f32),
+                );
+            }
         }
     }
     rates.sort_by(f32::total_cmp);
@@ -160,20 +178,35 @@ pub fn stream_options(backend: &str, device: Option<&str>) -> (Vec<f32>, Vec<u32
         rates = DEFAULT_RATES.to_vec();
     }
 
-    let mut buffers: Vec<u32> = if buf_max > 0 {
-        BUFFER_CANDIDATES
-            .into_iter()
-            .filter(|b| *b >= buf_min && *b <= buf_max)
-            .collect()
-    } else {
-        Vec::new()
+    // Buffers: intersect every reported Range; skip devices that report
+    // Unknown (they will take whatever the session picks).
+    let mut buf_min: Option<u32> = None;
+    let mut buf_max: Option<u32> = None;
+    let mut absorb = |range: &cpal::SupportedBufferSize| {
+        if let cpal::SupportedBufferSize::Range { min, max } = *range {
+            buf_min = Some(buf_min.map_or(min, |m| m.max(min)));
+            buf_max = Some(buf_max.map_or(max, |m| m.min(max)));
+        }
     };
-    if buffers.is_empty() {
-        buffers = if buf_min <= buf_max {
-            vec![buf_min]
-        } else {
-            vec![64, 128, 256, 512, 1024]
-        };
+    for c in in_cfgs.iter().flat_map(|v| v.iter()) {
+        absorb(c.buffer_size());
     }
+    for c in out_cfgs.iter().flat_map(|v| v.iter()) {
+        absorb(c.buffer_size());
+    }
+
+    let buffers = match (buf_min, buf_max) {
+        (Some(min), Some(max)) if min <= max => {
+            let mut v: Vec<u32> = BUFFER_CANDIDATES
+                .into_iter()
+                .filter(|b| *b >= min && *b <= max)
+                .collect();
+            if v.is_empty() {
+                v.push(min);
+            }
+            v
+        }
+        _ => vec![64, 128, 256, 512, 1024],
+    };
     (rates, buffers)
 }
