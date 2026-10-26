@@ -40,6 +40,12 @@ pub struct TunerSharedState {
     pub clarity: AtomicCell<f64>,
     /// RMS level of the analysed window (for the input meter).
     pub rms: AtomicCell<f32>,
+    /// Input meter truth, computed on the audio thread BEFORE the mono
+    /// downmix: RMS of the hottest channel and the block's sample peak.
+    /// Metering the downmix average understates a live channel beside a
+    /// silent sibling by up to 6 dB — hosts meter the live channel.
+    pub input_rms: AtomicCell<f32>,
+    pub input_peak: AtomicCell<f32>,
     /// Wall-clock ms (UNIX epoch) of the last confident detection; the UI
     /// treats the signal as absent when this goes stale (the detector only
     /// reports confident windows).
@@ -74,6 +80,8 @@ impl TunerSharedState {
             freq_hz: AtomicCell::new(0.0),
             clarity: AtomicCell::new(0.0),
             rms: AtomicCell::new(0.0),
+            input_rms: AtomicCell::new(0.0),
+            input_peak: AtomicCell::new(0.0),
             last_detection_ms: AtomicU64::new(0),
             a4_ref_bits: AtomicU64::new(440.0f64.to_bits()),
             gate_db: AtomicCell::new(-60.0),
@@ -527,23 +535,48 @@ impl Plugin for TunerPlugin {
             // tests/rt_handoff_no_alloc.rs gates the ring itself.)
             const CHUNK: usize = 4096;
             let mut mono = [0f32; CHUNK];
+            // Input metering truth, gathered here on the RT thread before
+            // the mix: per-channel sums of squares and the block sample
+            // peak. Stack arrays, pure arithmetic — no allocation, one
+            // atomic store after the loop.
+            const MAX_CH: usize = 8;
+            let mut sq = [0f64; MAX_CH];
+            let mut frames = 0usize;
+            let mut pk: f32 = 0.0;
             for (_start, blk) in buffer.iter_blocks(CHUNK) {
                 let n = blk.samples().min(CHUNK);
-                let nch = blk.channels().max(1) as f32;
+                // Downmix and metering see the first MAX_CH channels; the
+                // divisor matches exactly what was summed.
+                let nch = blk.channels().clamp(1, MAX_CH);
+                frames += n;
                 for i in 0..n {
                     let mut acc = 0.0f32;
-                    for c in 0..blk.channels() {
+                    for (c, ch_sq) in sq.iter_mut().take(nch).enumerate() {
                         if let Some(ch) = blk.get(c) {
-                            acc += ch[i];
+                            let v = ch[i];
+                            acc += v;
+                            *ch_sq += (v as f64) * (v as f64);
+                            let av = if v < 0.0 { -v } else { v };
+                            if av > pk {
+                                pk = av;
+                            }
                         }
                     }
-                    mono[i] = acc / nch;
+                    mono[i] = acc / nch as f32;
                 }
                 // Ring full (UI stalled longer than ~0.7 s): drop the block
                 // whole. A torn stream would poison detections; stale
                 // atomics read as silence (freshness gate) — the honest
                 // failure is a paused needle, never a glitch or a wrong note.
                 let _ = self.audio_ring.push_entire_slice(&mono[..n]);
+            }
+            if frames > 0 {
+                let mut rms_max = 0.0f64;
+                for v in &sq {
+                    rms_max = rms_max.max((v / frames as f64).sqrt());
+                }
+                self.shared.input_rms.store(rms_max as f32);
+                self.shared.input_peak.store(pk);
             }
         }
 

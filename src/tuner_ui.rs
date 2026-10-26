@@ -201,12 +201,9 @@ impl TunerUi {
         }
         const CHUNK: usize = 4096;
         let mut buf = [0f32; CHUNK];
-        // Continuous input level for the dB meter: mean square over
-        // everything drained this frame, independent of detections (the
-        // detector's own rms only moves when a pitch is confident).
-        let mut ss: f64 = 0.0;
-        let mut n: usize = 0;
-        let mut peak: f64 = 0.0;
+        // Meter levels come from the audio thread (pre-mix, hottest
+        // channel RMS + sample peak): averaging the mono downmix would
+        // understate one live channel beside a silent sibling by 6 dB.
         let mut drained = false;
         while rb.slots() > 0 {
             let want = rb.slots().min(CHUNK);
@@ -214,14 +211,6 @@ impl TunerUi {
                 break;
             }
             drained = true;
-            for &x in &buf[..want] {
-                ss += (x as f64) * (x as f64);
-                let ax = if x < 0.0 { -(x as f64) } else { x as f64 };
-                if ax > peak {
-                    peak = ax;
-                }
-            }
-            n += want;
             if let Some(d) = detector.push_samples(&buf[..want]) {
                 self.shared.freq_hz.store(d.freq_hz);
                 self.shared.clarity.store(d.clarity);
@@ -245,12 +234,14 @@ impl TunerUi {
                 -120.0
             }
         };
-        let rms_db = if drained && n > 0 {
-            db_of((ss / n as f64).sqrt())
+        let (rms_db, frame_peak_db) = if drained {
+            (
+                db_of(self.shared.input_rms.load() as f64),
+                db_of(self.shared.input_peak.load() as f64),
+            )
         } else {
-            -120.0
+            (-120.0, -120.0)
         };
-        let frame_peak_db = db_of(peak);
         {
             let k = if rms_db > self.meter_level_db {
                 0.5 // fast attack
