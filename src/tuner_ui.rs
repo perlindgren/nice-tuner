@@ -88,11 +88,12 @@ pub struct TunerUi {
     /// Meter: current input level (bar), RMS-based, EMA-smoothed every
     /// frame (fast attack, moderate release).
     meter_level_db: f32,
-    /// Meter: max peak (marker). Sticks for 1 s, timer resets whenever a
-    /// frame beats it; afterwards eases toward the current level.
+    /// Meter: peak marker. Analog-ballistics: rises instantly whenever the
+    /// input beats it (that IS the timer reset — no dead hold interval),
+    /// otherwise slides down at a constant dB/s toward the current level.
     meter_peak_db: f32,
-    /// Wall-clock ms until the current peak stops holding (fps-independent).
-    peak_hold_until_ms: u64,
+    /// Wall-clock ms of the previous meter tick (real dt for the decay).
+    meter_last_ms: u64,
     latch_name: &'static str,
     latch_oct: i8,
     cents_shown: f64,
@@ -145,7 +146,7 @@ impl TunerUi {
             latch_midi: -1,
             meter_level_db: -120.0,
             meter_peak_db: -120.0,
-            peak_hold_until_ms: 0,
+            meter_last_ms: crate::now_epoch_ms(),
             latch_name: "–",
             latch_oct: 0,
             cents_shown: 0.0,
@@ -250,11 +251,17 @@ impl TunerUi {
             };
             self.meter_level_db += (rms_db - self.meter_level_db) * k;
         }
-        if frame_peak_db >= self.meter_peak_db {
+        // Instant rise whenever input beats the marker; otherwise a steady
+        // slide (24 dB/s) toward the current level — no frozen hold
+        // interval, so the descent reads continuously from the first frame
+        // after the signal drops. Real dt keeps the rate frame-rate proof.
+        let now = crate::now_epoch_ms();
+        let dt = (now - self.meter_last_ms).min(200) as f32 / 1000.0;
+        self.meter_last_ms = now;
+        if frame_peak_db > self.meter_peak_db {
             self.meter_peak_db = frame_peak_db;
-            self.peak_hold_until_ms = crate::now_epoch_ms() + 1000;
-        } else if crate::now_epoch_ms() >= self.peak_hold_until_ms {
-            self.meter_peak_db += (self.meter_level_db - self.meter_peak_db) * 0.06;
+        } else {
+            self.meter_peak_db = (self.meter_peak_db - 24.0 * dt).max(self.meter_level_db);
         }
     }
 }
