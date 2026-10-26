@@ -1,0 +1,41 @@
+// Anchor data for the plant's second segment (the low middle), the
+// sprite plant2.png.
+//
+// Every point is in the segment image's own pixel space: (0, 0) at the
+// upper-left, x right, y down — the same convention the anchor notes in
+// examples/shapes/README.md give, the y flip to node space being the
+// loader's job.
+//
+// A segment is attached by landing its lower_anchor exactly on the
+// previous segment's upper_anchor — the two picks need not be equal
+// numbers, each belongs to its own image.
+(
+    segment: 2,
+    image: "plant2.png",
+    // The joint this segment attaches to the previous one through:
+    // plant1's upper joint.
+    lower_anchor: (
+        300.4,
+        254.7,
+    ),
+    // The joint the next segment attaches to.
+    upper_anchor: (
+        300.0,
+        19.0,
+    ),
+    // The points flowers (and, once grown, fruit) attach to.
+    flower_anchors: [
+        (
+            288.0,
+            164.0,
+        ),
+        (
+            419.0,
+            73.0,
+        ),
+        (
+            313.0,
+            48.0,
+        ),
+    ],
+)

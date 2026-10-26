@@ -1,0 +1,31 @@
+[package]
+name = "frost"
+version = "0.1.0"
+edition = "2024"
+
+# A standalone package: an embeddable 2D wgpu renderer for host
+# applications (see `frost::embedded`). The `[workspace]` table with no
+# members roots the package in its own workspace so a parent crate's
+# workspace can never absorb it — the vendored copy builds and checks
+# exactly as it sits here. The engine's own tools, examples, and web
+# target left with the embedding refactor: the host owns the window, the
+# event loop, the GPU device, and the presentation cadence.
+[workspace]
+# Edition 2024 implies resolver 3; stated explicitly so the resolver
+# cannot drift from the package's edition.
+resolver = "3"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+log = { version = "0.4.34", features = ["release_max_level_off"] }
+# Font parsing, Unicode text shaping and glyph rasterization for
+# `Shape::Text`. Pure Rust (the Fontation project); the whole dependency
+# tree (skrifa, yazi, zeno) resolves from the local registry cache.
+swash = "0.2.10"
+wgpu = "30.0.1"
+# `winit` carries no runtime role here — the host owns the window and
+# pumps the events — the crate keeps it for the plain input/geometry
+# types it defines and re-exports (`KeyCode`, `MouseButton`,
+# `PhysicalSize`, `Fullscreen`, …), so host code and frost speak one
+# vocabulary for keys and buttons.
+winit = "0.30.13"

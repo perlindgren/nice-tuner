@@ -1,0 +1,14 @@
+// frost tileset file — one sheet, one cut, one set of roles.
+// sheet: the sprite file, by path relative to THIS file. cut: [rows,
+// cols] of cells, row-major from the sheet's top-left. cells: the
+// tiles that stand in the world's way, by cell number — a cell not
+// listed is not solid, and solid cells are the only ones written.
+(
+    name: "basic_tiles",
+    sheet: "../sprites/basic_tiles.png",
+    cut: [
+        1,
+        4,
+    ],
+    cells: [],
+)

@@ -1,0 +1,11 @@
+// The brick's authored footprint: one inset rectangle that both throws
+// a shadow and blocks the player, written in the picture's pixels —
+// the 64 x 64 picture centred at [32, 32], two pixels shy of every edge
+// so the bevel is picture, not physics. The `authored_hall` example
+// bakes this once and rides it onto every brick in the room;
+// `sprite_util` draws it over the sprite when the file is open.
+(
+    shapes: [
+        (kind: "rect", at: [32.0, 32.0], size: [60.0, 60.0], solid: (bounce: 0.35), occludes: true),
+    ],
+)

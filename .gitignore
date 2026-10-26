@@ -1,0 +1,5 @@
+/target
+.cargohome
+*.clap
+*.vst3
+dist/

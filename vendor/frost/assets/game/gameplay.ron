@@ -1,0 +1,18 @@
+// immortal gameplay data — the pace of the garden.
+// The running app re-reads this file the frame it changes; a field
+// that is missing or unreadable keeps its shipped default, and the
+// defaults live beside the code that explains why they are what
+// they are.
+(
+    // Growth runs at 1/grow_slowdown of real time (main.rs).
+    grow_slowdown: 5.0,
+    // A plant's water reserve drains over this many growth-clock
+    // seconds — 8.25 real seconds at the slowdown, chosen to leave
+    // the plant thirsty just before its base completes.
+    drain_time: 2.75,
+    // The real seconds a dry plant's withering takes to yellow.
+    dry_yellow_time: 6.0,
+    // The real seconds a watered plant takes to rewhiten — twice as
+    // fast as the yellowing, so relief outranks neglect.
+    dry_white_time: 3.0,
+)

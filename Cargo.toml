@@ -1,0 +1,51 @@
+[package]
+name = "nice-tuner"
+version = "0.1.0"
+edition = "2024"
+description = "A stringed-instrument tuner plugin with a frost-derived embedded GUI"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+# The `lib` artifact is needed for the standalone target
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "nice-tuner"
+path = "src/main.rs"
+required-features = ["standalone"]
+
+[features]
+default = []
+# Builds the standalone app binary (src/main.rs). Kept out of the default set
+# so the plugin (cdylib) builds do not pull in cpal/jack/midir.
+standalone = ["nice-plug/standalone"]
+
+[dependencies]
+nice-plug = { version = "0.4.2", default-features = false, features = [
+    "editor",
+    "vst3",
+    "tracing-subscriber",
+    # Debug-build guard: fails loudly if `process()` allocates.
+    "assert_process_allocs",
+] }
+# Pinned to what nice-plug 0.4.2's byo_gui_wgpu example was built against.
+# NOTE: baseview 0.3.7+ moved the WindowHandler trait; nice-plug `main` already
+# tracks baseview 0.4.1 — revisit this pin when nice-plug releases again.
+baseview = { version = "=0.3.3", features = ["tracing"] }
+wgpu = "30"
+pollster = "0.4"
+crossbeam = "0.8"
+# baseview 0.3.3 does not re-export it; its Event::Keyboard carries this type
+keyboard-types = "0.8.3"
+# M2/M5: pitch-detection DSP crate (uncomment once crates/pitch is in place)
+# pitch = { path = "crates/pitch" }
+# M3: frost fork (embedded renderer, winit run loop + rodio removed)
+# frost = { path = "vendor/frost" }
+
+[workspace]
+# crates/pitch and vendor/frost are excluded while built as standalone
+# packages; at final integration they become regular members via path deps
+# (see stage/integration_notes.md).
+members = ["xtask"]
+exclude = ["crates/pitch", "vendor/frost"]

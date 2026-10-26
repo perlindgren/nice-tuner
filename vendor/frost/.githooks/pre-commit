@@ -1,0 +1,33 @@
+#!/bin/sh
+# Gate before a commit lands: format the whole workspace, re-stage only the
+# .rs files that were already staged (so unstaged working-tree changes stay
+# out of the commit), then hold clippy to ZERO warnings on every target.
+#
+# The web build (the wasm32-unknown-unknown target — its only consumer in
+# this repo, see `text_web`) is deliberately out of this loop for now; it is
+# checked by hand and can be brought back here later. The check is SCOPED to
+# the library:
+#     cargo check --target wasm32-unknown-unknown -p frost
+# — the `sprite_util` tool is a workspace member (and a default one), and a
+# bare wasm check would build the native-only tool too (rfd, env_logger);
+# `-p frost` keeps wasm meaning "the engine compiles for the web", which is
+# the claim the check exists to make.
+#
+# This repo enforces via .githooks/; the link lives in per-clone config,
+# so a fresh clone opts in once:
+#     sh .githooks/install.sh
+staged=$(git diff --name-only --cached)
+cargo fmt --all || exit 1
+for f in $staged; do
+    case $f in
+        *.rs) git add "$f" ;;
+    esac
+done
+
+printf 'pre-commit: clippy -D warnings (native, all targets)...\n'
+cargo clippy --all-targets -- -D warnings || {
+    printf 'pre-commit: clippy failed - commit aborted.\n' >&2
+    exit 1
+}
+
+exit 0

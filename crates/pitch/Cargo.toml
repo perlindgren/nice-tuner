@@ -1,0 +1,13 @@
+[package]
+name = "pitch"
+version = "0.1.0"
+edition = "2021"
+description = "Real-time monophonic pitch detection (YIN) for a hardware-instrument tuner, std-only."
+license = "MIT"
+
+# Detach from any parent directory Cargo.toml (the nice-tuner workspace at
+# the repo root is a separate package); this crate is its own workspace root.
+[workspace]
+
+[dependencies]
+# none: std only, by design

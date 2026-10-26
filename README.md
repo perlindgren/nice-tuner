@@ -1,0 +1,67 @@
+# Nice Tuner
+
+A stringed-instrument chromatic tuner audio plugin (CLAP + VST3 + standalone),
+built on:
+
+| layer | crate | role |
+|---|---|---|
+| host protocol + audio | [nice-plug 0.4.2](https://codeberg.org/RustAudio/nice-plug) | CLAP/VST3, params, DSP↔UI plumbing |
+| window embedding | [baseview `=0.3.3`](https://github.com/RustAudio/baseview) | child view inside the DAW window, host-driven events & frame timer |
+| rendering | `vendor/frost` (fork of [perlindgren/frost](https://github.com/perlindgren/frost)) | scene graph + wgpu 30 2D renderer, winit run loop stripped (`frost::embedded::Embedded`) |
+| DSP | `crates/pitch` | allocation-free YIN pitch detection + note mapping |
+
+See [docs/VIABILITY.md](docs/VIABILITY.md) for why the GUI stack looks like this
+(winit cannot embed into a host; baseview is nice-plug's sanctioned BYO-GUI path),
+and [docs/SCENE.md](docs/SCENE.md) for the UI design.
+
+## Layout
+
+```
+src/lib.rs        plugin: TunerPlugin (params, process), TunerEditor/Window (baseview)
+src/main.rs       standalone target (`--features standalone`)
+crates/pitch      pure-Rust YIN pitch detector (unit-tested, no deps)
+vendor/frost      frost fork: embedded wgpu renderer, no event loop, no rodio
+```
+
+## Building
+
+```sh
+cargo check                          # plugin lib (cdylib) — CLAP/VST3 body
+cargo test                           # unit tests (pitch detector, frost logic)
+cargo run --features standalone      # standalone app for testing without a DAW
+```
+
+### Producing plugin binaries
+
+```sh
+cargo xtask bundle nice-tuner --release   # → dist/  (*.clap, *.vst3 bundles on macOS)
+```
+
+This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
+`bundler.toml`). The full verification suite lives in `scripts/check.sh`.
+
+## Notes
+
+- **No vsync**: the GUI surface runs `PresentMode::AutoNoVsync`; plugins must
+  never block the host main thread.
+- **Real-time safety**: `process()` is guarded by nice-plug's
+  `assert_process_allocs` in debug builds; the detector preallocates.
+- **Winit is absent from the runtime path**: `vendor/frost` keeps winit only for
+  event *data types*; constructing an `EventLoop` is grep-gated out of the tree.
+
+## Licensing
+
+- This plugin: MIT OR Apache-2.0.
+- `vendor/frost`: **upstream has no license** (README of perlindgren/frost says
+  all rights reserved pending a license decision). This fork is used for local
+  development; **obtain permission from the upstream authors before
+  distributing** any build that links it. The bundled FiraCode font is OFL.
+
+## Status
+
+- [x] M1 plugin skeleton (baseview window, wgpu surface, host adapters)
+- [x] M2 pitch detector (`crates/pitch`) — 10/10 tests green
+- [ ] M3 frost embedded engine (`frost::embedded::Embedded`)
+- [ ] M4 baseview→frost adapter + tuner scene
+- [ ] M5 DSP→GUI wiring (gated on editor open)
+- [ ] M6 full build + docs

@@ -1,0 +1,301 @@
+// frost map file — painted cells on a tile grid.
+// tilesets: the tileset documents this map's layers cut from, by
+// path relative to THIS file. Each layer names its tileset by the
+// name that document speaks. Cells stand as named records — (x, y)
+// counted from the layer's top-left, tile: the cell's number in the
+// cut, and tfm: the tile's turn, written only when it is turned.
+// An absent cell is empty, and empty cells are not written.
+(
+    tilesets: [
+        "../tilesets/basic_tiles.tileset.ron",
+        "../tilesets/tiles_lethal.tileset.ron",
+        "../tilesets/tiles_eyecandy.tileset.ron",
+    ],
+    layers: [
+        (
+            tileset: "basic_tiles",
+            cols: 40,
+            rows: 24,
+            cells: [
+                (
+                    x: 14,
+                    y: 11,
+                    tile: 0,
+                ),
+                (
+                    x: 15,
+                    y: 11,
+                    tile: 0,
+                ),
+                (
+                    x: 19,
+                    y: 11,
+                    tile: 0,
+                ),
+                (
+                    x: 20,
+                    y: 11,
+                    tile: 0,
+                ),
+                (
+                    x: 14,
+                    y: 12,
+                    tile: 0,
+                ),
+                (
+                    x: 15,
+                    y: 12,
+                    tile: 0,
+                ),
+                (
+                    x: 19,
+                    y: 12,
+                    tile: 0,
+                ),
+                (
+                    x: 20,
+                    y: 12,
+                    tile: 0,
+                ),
+                (
+                    x: 14,
+                    y: 15,
+                    tile: 0,
+                    tfm: 8,
+                ),
+                (
+                    x: 15,
+                    y: 15,
+                    tile: 0,
+                    tfm: 8,
+                ),
+                (
+                    x: 14,
+                    y: 16,
+                    tile: 0,
+                    tfm: 8,
+                ),
+                (
+                    x: 15,
+                    y: 16,
+                    tile: 0,
+                    tfm: 8,
+                ),
+            ],
+        ),
+        (
+            tileset: "tiles_lethal",
+            cols: 40,
+            rows: 24,
+            cells: [
+                (
+                    x: 14,
+                    y: 10,
+                    tile: 0,
+                ),
+                (
+                    x: 15,
+                    y: 10,
+                    tile: 0,
+                ),
+                (
+                    x: 19,
+                    y: 10,
+                    tile: 0,
+                ),
+                (
+                    x: 20,
+                    y: 10,
+                    tile: 0,
+                ),
+                (
+                    x: 13,
+                    y: 11,
+                    tile: 11,
+                ),
+                (
+                    x: 16,
+                    y: 11,
+                    tile: 3,
+                    tfm: 15,
+                ),
+                (
+                    x: 18,
+                    y: 11,
+                    tile: 11,
+                ),
+                (
+                    x: 21,
+                    y: 11,
+                    tile: 3,
+                    tfm: 15,
+                ),
+                (
+                    x: 13,
+                    y: 12,
+                    tile: 11,
+                    tfm: 2,
+                ),
+                (
+                    x: 16,
+                    y: 12,
+                    tile: 3,
+                    tfm: 15,
+                ),
+                (
+                    x: 18,
+                    y: 12,
+                    tile: 11,
+                    tfm: 2,
+                ),
+                (
+                    x: 21,
+                    y: 12,
+                    tile: 3,
+                    tfm: 15,
+                ),
+                (
+                    x: 14,
+                    y: 13,
+                    tile: 0,
+                    tfm: 8,
+                ),
+                (
+                    x: 15,
+                    y: 13,
+                    tile: 0,
+                    tfm: 8,
+                ),
+                (
+                    x: 19,
+                    y: 13,
+                    tile: 0,
+                    tfm: 8,
+                ),
+                (
+                    x: 20,
+                    y: 13,
+                    tile: 0,
+                    tfm: 8,
+                ),
+                (
+                    x: 14,
+                    y: 14,
+                    tile: 0,
+                ),
+                (
+                    x: 15,
+                    y: 14,
+                    tile: 0,
+                ),
+                (
+                    x: 13,
+                    y: 15,
+                    tile: 3,
+                    tfm: 7,
+                ),
+                (
+                    x: 16,
+                    y: 15,
+                    tile: 11,
+                    tfm: 10,
+                ),
+                (
+                    x: 13,
+                    y: 16,
+                    tile: 3,
+                    tfm: 7,
+                ),
+                (
+                    x: 16,
+                    y: 16,
+                    tile: 11,
+                    tfm: 8,
+                ),
+                (
+                    x: 14,
+                    y: 17,
+                    tile: 0,
+                    tfm: 8,
+                ),
+                (
+                    x: 15,
+                    y: 17,
+                    tile: 0,
+                    tfm: 8,
+                ),
+            ],
+        ),
+        (
+            tileset: "tiles_eyecandy",
+            cols: 40,
+            rows: 24,
+            cells: [
+                (
+                    x: 14,
+                    y: 11,
+                    tile: 0,
+                ),
+                (
+                    x: 15,
+                    y: 11,
+                    tile: 1,
+                ),
+                (
+                    x: 15,
+                    y: 12,
+                    tile: 1,
+                    tfm: 8,
+                ),
+                (
+                    x: 16,
+                    y: 12,
+                    tile: 0,
+                    tfm: 8,
+                ),
+                (
+                    x: 19,
+                    y: 14,
+                    tile: 19,
+                ),
+                (
+                    x: 20,
+                    y: 14,
+                    tile: 19,
+                ),
+                (
+                    x: 13,
+                    y: 15,
+                    tile: 0,
+                ),
+                (
+                    x: 14,
+                    y: 15,
+                    tile: 1,
+                ),
+                (
+                    x: 19,
+                    y: 15,
+                    tile: 19,
+                ),
+                (
+                    x: 20,
+                    y: 15,
+                    tile: 19,
+                ),
+                (
+                    x: 14,
+                    y: 16,
+                    tile: 1,
+                    tfm: 8,
+                ),
+                (
+                    x: 15,
+                    y: 16,
+                    tile: 0,
+                    tfm: 8,
+                ),
+            ],
+        ),
+    ],
+)

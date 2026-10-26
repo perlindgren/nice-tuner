@@ -1,0 +1,33 @@
+/target
+# Only the wasm build output is disposable (web/build.sh regenerates
+# it); the page and the web scripts beside it are source — keep them
+# tracked so any machine can `rustup target add wasm32-unknown-unknown
+# && cargo install wasm-bindgen-cli --version 0.2.129 && ./web/build.sh`.
+/web/pkg/
+/antifrost-web.zip
+# Cargo.lock is tracked: the wasm-bindgen CLI must match the crate the
+# lock resolves (see web/build.sh), examples want reproducible builds,
+# and a resolver's opinion is cheap to version and expensive to re-guess.
+**/.DS_Store
+
+# The game writes its own files where it launches from — settings the
+# moment one changes, progress whenever a hill moves. Per-machine
+# artifacts, never source.
+antifrost.settings.ron
+antifrost.progress.ron
+
+# self-signed certificates for `serve.py --tls` — minted locally, never committed
+web/.tls/
+web/.watch-stamp
+
+# The probe pages under web/ are source; their wasm is build output.
+/web/min/pkg/
+/web/place/pkg/
+
+# Scratch worktrees and a hardlinked cargo home for building old commits.
+/.workspace/
+
+# tools/ holds python now, and driving a browser means importing the tools
+# from scratch scripts as well as running them: bytecode lands next to a
+# tracked file on the first import and is never wanted.
+__pycache__/

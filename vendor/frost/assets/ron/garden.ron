@@ -1,0 +1,29 @@
+// A winter plan for the bench: nested structs, an array, a map, and
+// enums of every RON flavour — unit, newtype and struct variants.
+(
+    gardener: Person(
+        name: "Per",                          // a string with \"escapes\" survives
+        boots: 43,
+        favorite: Kind::Bee,                  // unit enum
+    ),
+    bench: Bench(
+        slots: [                              // an array of structs
+            Slot(
+                soil: Soil { ph: 6.5, damp: Wet },        // enum field, curly struct
+                plant: Plant(
+                    kind: Kind::Tomato(form: Truss(canes: 6)),  // enums nested
+                    height: 182.5,
+                ),
+            ),
+            Slot(
+                soil: Soil { ph: 7.1, damp: Dry },
+                plant: None,                  // the Option flavour of a unit enum
+            ),
+        ],
+    ),
+    watering: Watering::PingPong { laps: 2, fast: false },  // struct variant
+    chores: {                                 // map: string keys, enum values
+        "mon": Chores(water: true, weed: Kind::Bug(Count(3))),  // newtype enum
+        "sun": None,
+    },
+)
