@@ -31,6 +31,10 @@ vendor/frost      frost fork: embedded wgpu renderer, no event loop, no rodio
 cargo check                          # plugin lib (cdylib) — CLAP/VST3 body
 cargo test                           # unit tests (pitch detector, frost logic)
 cargo run --features standalone      # standalone app for testing without a DAW
+# mono input (e.g. the built-in "MacBook Pro Microphone") needs the second,
+# 1-in/1-out audio layout, since standalone matches input channel counts
+# exactly and defaults to layout 1 (stereo):
+./target/debug/nice-tuner -l 2 --input-device "MacBook Pro Microphone"
 ```
 
 ### Producing plugin binaries
