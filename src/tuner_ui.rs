@@ -1107,11 +1107,13 @@ impl TunerUi {
                 .map(fmt_rate)
                 .or_else(|| self.default_label(Dropdown::Rate))
                 .unwrap_or_else(|| "\u{2014}".into()),
-            Dropdown::Buffer => self
-                .settings
-                .period_size
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| self.buffer_default().to_string()),
+            Dropdown::Buffer => match self.settings.period_size {
+                // Same rule as Backend: unset is unset — the dropdown's
+                // starred row names the value that follows (the live
+                // driver-granted block size); the button stays a dash.
+                None => "\u{2014}".to_string(),
+                Some(p) => p.to_string(),
+            },
             Dropdown::Input => self
                 .settings
                 .input_device
