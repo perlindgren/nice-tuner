@@ -51,6 +51,10 @@ pub struct TunerSharedState {
     /// single-instrument cable; auto would drift onto a noisy sibling);
     /// set live by the panel, seeded from the settings file in standalone.
     pub input_channel: AtomicCell<u32>,
+    /// Block size (frames per channel) the live stream ACTUALLY runs
+    /// with — the driver's answer, not the requested one. The settings
+    /// page shows it as the buffer default; 0 until the first callback.
+    pub buffer_frames: AtomicCell<u32>,
     /// Standalone top-level window position, physical px (top-left),
     /// polled by the gui on Windows; read when geometry is persisted.
     pub window_pos: std::sync::Mutex<Option<(i32, i32)>>,
@@ -94,6 +98,7 @@ impl TunerSharedState {
             input_rms: AtomicCell::new(0.0),
             input_peak: AtomicCell::new(0.0),
             input_channel: AtomicCell::new(1),
+            buffer_frames: AtomicCell::new(0),
             window_pos: std::sync::Mutex::new(None),
             pending_geom: std::sync::Mutex::new(None),
             last_detection_ms: AtomicU64::new(0),
@@ -567,6 +572,9 @@ impl Plugin for TunerPlugin {
             );
             self.shared.gate_db.store(self.params.gate_db.value());
         }
+
+        // One relaxed store per block: the size the driver gave us.
+        self.shared.buffer_frames.store(buffer.samples() as u32);
 
         if self.shared.is_open() {
             // Buffer is in-place (the framework copied host input into it);

@@ -737,11 +737,39 @@ impl TunerUi {
             self.buffer_opts = buffers.iter().map(|b| b.to_string()).collect();
             self.driver_rate =
                 crate::devices::driver_default_rate(&backend, input.as_deref(), output.as_deref());
+            // A STORED stream value the driver's current list does not
+            // offer stays in the list — same rule as saved devices.
+            // "Stored" must never silently masquerade as the default
+            // just because this moment's enumeration missed it.
+            if let Some(p) = self.settings.period_size {
+                let s = p.to_string();
+                if !self.buffer_opts.contains(&s) {
+                    self.buffer_opts.insert(0, s);
+                }
+            }
+            if let Some(r) = self.settings.sample_rate {
+                let s = fmt_rate(r);
+                if !self.rate_opts.contains(&s) {
+                    self.rate_opts.insert(0, s);
+                }
+            }
         }
     }
 
-    /// nice-plug's baked period-size default (its clap `default_value`).
+    /// nice-plug's baked period-size default — only a stand-in for the
+    /// case where the stream never ran (measure below is the truth).
     const DEFAULT_BUFFER: u32 = 512;
+
+    /// The buffer default AS IT IS: the block size the live stream
+    /// actually got from the driver (trust the driver — the requested
+    /// default often is not the granted one), falling back to
+    /// nice-plug's baked 512 only before the first audio callback.
+    fn buffer_default(&self) -> u32 {
+        match self.shared.buffer_frames.load() {
+            0 => Self::DEFAULT_BUFFER,
+            n => n,
+        }
+    }
 
     /// The concrete value the default hides — shown wherever the word
     /// "(default)" used to stand. None = genuinely unknowable (no system
@@ -757,7 +785,7 @@ impl TunerUi {
             Dropdown::Input => self.default_in.clone()?,
             Dropdown::Output => self.default_out.clone()?,
             Dropdown::Rate => fmt_rate(self.driver_rate?),
-            Dropdown::Buffer => Self::DEFAULT_BUFFER.to_string(),
+            Dropdown::Buffer => self.buffer_default().to_string(),
             Dropdown::InputCh => "1".to_owned(),
             Dropdown::A4 => "440".to_owned(),
             Dropdown::Gate => "-60".to_owned(),
@@ -826,7 +854,7 @@ impl TunerUi {
             Dropdown::Input => self.default_in.clone().unwrap_or_default(),
             Dropdown::Output => self.default_out.clone().unwrap_or_default(),
             Dropdown::Rate => self.driver_rate.map(|r| r.to_string()).unwrap_or_default(),
-            Dropdown::Buffer => Self::DEFAULT_BUFFER.to_string(),
+            Dropdown::Buffer => self.buffer_default().to_string(),
             Dropdown::InputCh => "1".to_owned(),
             Dropdown::A4 => "440".to_owned(),
             Dropdown::Gate => "-60".to_owned(),
@@ -885,7 +913,7 @@ impl TunerUi {
                 .settings
                 .period_size
                 .map(|p| p.to_string())
-                .unwrap_or_else(|| Self::DEFAULT_BUFFER.to_string()),
+                .unwrap_or_else(|| self.buffer_default().to_string()),
             Dropdown::InputCh => match self.shared.input_channel.load() {
                 0 => "Auto (loudest)".to_string(),
                 n => n.to_string(),
@@ -1047,7 +1075,7 @@ impl TunerUi {
                 .settings
                 .period_size
                 .map(|p| p.to_string())
-                .unwrap_or_else(|| Self::DEFAULT_BUFFER.to_string()),
+                .unwrap_or_else(|| self.buffer_default().to_string()),
             Dropdown::Input => self
                 .settings
                 .input_device
