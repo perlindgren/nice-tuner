@@ -469,11 +469,11 @@ impl Process for TunerUi {
         // No signal, no reading: a bare dash, not a confident "+00.0¢".
         let cents_s = if signal {
             let cents = self.cents_shown;
-            format!(
+            trim_zeros(&format!(
                 "{}{:04.1}¢",
                 if cents >= 0.0 { "+" } else { "−" },
                 cents.abs()
-            )
+            ))
         } else {
             "—".to_string()
         };
@@ -492,7 +492,11 @@ impl Process for TunerUi {
         // idle bar spans the same six, so even the "· A4=" tail cannot
         // shift.
         let freq_s = if signal {
-            format!("{:06.1} Hz  ·  A4={:.0}", self.freq_shown, a4)
+            format!(
+                "{} Hz  ·  A4={:.0}",
+                trim_zeros(&format!("{:06.1}", self.freq_shown)),
+                a4
+            )
         } else {
             format!("——————  ·  A4={:.0}", a4)
         };
@@ -666,6 +670,29 @@ fn clip(s: &str, n: usize) -> String {
     } else {
         format!("{}…", s.chars().take(n - 1).collect::<String>())
     }
+}
+
+/// Pad-with-zeros output, pruned to ONE anchor zero: "0055.0" → " 055.0",
+/// "+00.7¢" → "+ 0.7¢", while "0440.0" → " 440.0" and a lone "0.7" keeps
+/// its integer zero. The glyph COUNT is untouched, so the slotted
+/// (draw_tabular) layout stays as immovable as with full zero padding —
+/// only the ink changes: leading zeros that merely fill space become
+/// blanks, the last zero stays as the digit the eye anchors on.
+fn trim_zeros(s: &str) -> String {
+    let mut c: Vec<char> = s.chars().collect();
+    // Skip a leading sign so the zero run is found where it lives.
+    let start = usize::from(matches!(
+        c.first(),
+        Some('+') | Some('-') | Some('\u{2212}') | Some(' ')
+    ));
+    let mut end = start;
+    while end < c.len() && c[end] == '0' {
+        end += 1;
+    }
+    for x in &mut c[start..end.saturating_sub(1).max(start)] {
+        *x = ' ';
+    }
+    c.into_iter().collect()
 }
 
 fn fmt_rate(r: f32) -> String {
@@ -1586,7 +1613,24 @@ impl TunerUi {
 
 #[cfg(test)]
 mod tests {
-    use super::{GAUGE_KNEE_OPTIONS, cents_to_units};
+    use super::{GAUGE_KNEE_OPTIONS, cents_to_units, trim_zeros};
+
+    #[test]
+    fn trim_zeros_prunes_fill_keeps_anchor() {
+        // Extra leading zeros become blanks…
+        assert_eq!(trim_zeros("0055.0"), " 055.0");
+        assert_eq!(trim_zeros("0005.0"), "  05.0");
+        assert_eq!(trim_zeros("+00.7¢"), "+ 0.7¢");
+        // …a single leading zero is the anchor and stays…
+        assert_eq!(trim_zeros("0440.0"), "0440.0");
+        assert_eq!(trim_zeros("+05.2¢"), "+05.2¢");
+        assert_eq!(trim_zeros("0.7"), "0.7");
+        // …no leading zeros: untouched; glyph counts are preserved.
+        assert_eq!(trim_zeros("440.0"), "440.0");
+        for s in ["0055.0", "0440.0", "440.0", "+00.7¢", "0.7"] {
+            assert_eq!(trim_zeros(s).chars().count(), s.chars().count());
+        }
+    }
 
     #[test]
     fn gauge_scale_endpoints_symmetry_and_midroom() {
