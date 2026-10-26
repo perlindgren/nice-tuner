@@ -468,6 +468,23 @@ impl Process for TunerUi {
             let half = 240.0 * fit;
             let y = -150.0 * fit;
             ctx.rectangle(0.0, y, half, 2.5 * fit, Color { a: 0.5, ..TRACK }, 0.05);
+            // dBFS scale: 0 at the right end, -48 at the left, every 6 dB.
+            // Short ticks (±4) with numerals well below — digit tops must
+            // not crowd the ticks.
+            for i in 0..=8u32 {
+                let xv = half - i as f32 * (half / 4.0);
+                ctx.rectangle(xv, y, 1.0 * fit, 4.0 * fit, Color { a: 0.6, ..DIM }, 0.06);
+                ctx.text(
+                    xv,
+                    y - 26.0 * fit,
+                    font,
+                    format!("{}", -(6 * i as i32)),
+                    16.0 * fit,
+                    550.0,
+                    DIM,
+                    0.06,
+                );
+            }
             // Bar: current level.
             let m = self.meter_level_db.clamp(-48.0, 0.0);
             let xv = half * (1.0 + m / 24.0);
