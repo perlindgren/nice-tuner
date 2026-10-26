@@ -441,7 +441,7 @@ impl Process for TunerUi {
                     y - 26.0 * fit,
                     font,
                     format!("{}", -(6 * i as i32)),
-                    14.0 * fit,
+                    16.0 * fit,
                     550.0,
                     DIM,
                     0.06,
