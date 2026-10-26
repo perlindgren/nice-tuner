@@ -453,7 +453,8 @@ impl Process for TunerUi {
                     y,
                     (xv + half) / 2.0,
                     2.5 * fit,
-                    Color { a: 0.85, ..AMBER },
+                    // Same amber→green state as note and needle (main lerps).
+                    main,
                     0.07,
                 );
             }
