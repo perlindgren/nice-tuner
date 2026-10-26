@@ -11,7 +11,11 @@ publish = false
 crate-type = ["cdylib", "lib"]
 
 [[bin]]
-name = "nice-tuner"
+# Must NOT equal the lib target name: on MSVC the linker writes a
+# `<name>.pdb` per artifact into target/<profile>/deps/, so a cdylib and an
+# exe sharing the base name collide ("output file collision" on
+# nice_tuner.pdb). macOS hides this (lib-prefixed dylib, embedded DWARF).
+name = "nice-tuner-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 
@@ -48,7 +52,4 @@ pitch = { path = "crates/pitch" }
 frost = { path = "vendor/frost" }
 
 [workspace]
-# crates/pitch and vendor/frost are excluded while built as standalone
-# packages; at final integration they become regular members via path deps
-# (see stage/integration_notes.md).
 members = ["xtask", "crates/pitch", "vendor/frost"]

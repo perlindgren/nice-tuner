@@ -34,14 +34,14 @@ cargo run --features standalone      # standalone app for testing without a DAW
 # mono input (e.g. the built-in "MacBook Pro Microphone") needs the second,
 # 1-in/1-out audio layout, since standalone matches input channel counts
 # exactly and defaults to layout 1 (stereo):
-./target/debug/nice-tuner -l 2 --input-device "MacBook Pro Microphone"
+./target/debug/nice-tuner-standalone -l 2 --input-device "MacBook Pro Microphone"
 
 # Windows + ASIO (e.g. a Komplete Audio interface): build with the ASIO
 # feature, then select the backend and driver. The device name must match
 # the ASIO driver name exactly; passing a bogus name prints the full list.
 # ASIO is duplex, so omitting --output-device plays back on the same box.
-cargo build --features standalone-asio --bin nice-tuner
-target/debug/nice-tuner --backend asio --input-device "Komplete Input 1/2"
+cargo build --features standalone-asio --bin nice-tuner-standalone
+target/debug/nice-tuner-standalone --backend asio --input-device "Komplete Input 1/2"
 ```
 
 ### Producing plugin binaries

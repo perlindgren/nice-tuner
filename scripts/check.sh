@@ -30,7 +30,7 @@ if grep -rn "EventLoop\|ActiveEventLoop\|ApplicationHandler\|WindowAttributes" v
 fi
 
 echo "== standalone bin build (linker gate) =="
-cargo build --features standalone --bin nice-tuner
+cargo build --features standalone --bin nice-tuner-standalone
 
 echo "== plugin bundling =="
 cargo xtask bundle nice-tuner --release
