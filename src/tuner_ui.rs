@@ -85,9 +85,11 @@ pub struct TunerUi {
     // smoothed display state
     needle_cents: f32, // EMA'd cents shown on the gauge
     latch_midi: i16,   // -1 = nothing latched
-    /// Input level in dBFS for the meter, EMA-smoothed (fast attack, slow
-    /// release), computed continuously from the drained stream in `analyze`.
+    /// Meter level in dBFS: peak + hold semantics (instant attack on the
+    /// frame peak, hold, then slow release toward the ongoing RMS level).
     meter_db: f32,
+    /// Frames left on the current peak hold (~60/s).
+    peak_hold: u32,
     latch_name: &'static str,
     latch_oct: i8,
     cents_shown: f64,
@@ -139,6 +141,7 @@ impl TunerUi {
             needle_cents: 0.0,
             latch_midi: -1,
             meter_db: -120.0,
+            peak_hold: 0,
             latch_name: "–",
             latch_oct: 0,
             cents_shown: 0.0,
@@ -199,6 +202,7 @@ impl TunerUi {
         // detector's own rms only moves when a pitch is confident).
         let mut ss: f64 = 0.0;
         let mut n: usize = 0;
+        let mut peak: f64 = 0.0;
         let mut drained = false;
         while rb.slots() > 0 {
             let want = rb.slots().min(CHUNK);
@@ -208,6 +212,10 @@ impl TunerUi {
             drained = true;
             for &x in &buf[..want] {
                 ss += (x as f64) * (x as f64);
+                let ax = if x < 0.0 { -(x as f64) } else { x as f64 };
+                if ax > peak {
+                    peak = ax;
+                }
             }
             n += want;
             if let Some(d) = detector.push_samples(&buf[..want]) {
@@ -219,24 +227,30 @@ impl TunerUi {
                     .store(crate::now_epoch_ms(), Ordering::Relaxed);
             }
         }
-        // Always show the real input level: silent stream → -120, no
-        // samples at all (audio stopped) → also falls toward -120.
-        let target = if drained && n > 0 {
-            let rms = (ss / n as f64).sqrt();
-            if rms > 1e-7 {
-                (20.0 * rms.log10()) as f32
+        // Peak + hold metering: attack instantly to this frame's PEAK,
+        // hold it ~1.5 s, then release slowly toward the frame RMS — the
+        // classic PPM behavior that makes pick attacks readable.
+        let db_of = |a: f64| -> f32 {
+            if a > 1e-7 {
+                (20.0 * a.log10()) as f32
             } else {
                 -120.0
             }
+        };
+        let rms_db = if drained && n > 0 {
+            db_of((ss / n as f64).sqrt())
         } else {
             -120.0
         };
-        let k = if target > self.meter_db {
-            0.5 // fast attack
+        let peak_db = db_of(peak);
+        if peak_db >= self.meter_db {
+            self.meter_db = peak_db;
+            self.peak_hold = 90;
+        } else if self.peak_hold > 0 {
+            self.peak_hold -= 1; // sit at the held peak
         } else {
-            0.06 // slow release
-        };
-        self.meter_db += (target - self.meter_db) * k;
+            self.meter_db += (rms_db - self.meter_db) * 0.08; // slow decay
+        }
     }
 }
 
