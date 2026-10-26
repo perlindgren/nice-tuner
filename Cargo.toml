@@ -63,3 +63,12 @@ frost = { path = "vendor/frost" }
 
 [workspace]
 members = ["xtask", "crates/pitch", "vendor/frost"]
+
+# Dev-profile audio budget: pitch detection is bursty — one window-search
+# every ~85 ms runs on the *audio thread* inside the device callback. At
+# opt-level 0 that burst (measured ~2.3 ms) overshoots a 64-frame callback
+# budget (1.33 ms) and clicks. One optimized crate keeps debug builds live
+# at small buffers; everything else stays fast to compile and debuggable.
+# Regression guard: crates/pitch/tests/callback_budget.rs
+[profile.dev.package.pitch]
+opt-level = 3

@@ -72,6 +72,11 @@ This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
   never block the host main thread.
 - **Real-time safety**: `process()` is guarded by nice-plug's
   `assert_process_allocs` in debug builds; the detector preallocates.
+- **Debug builds survive small buffers**: pitch detection runs its (bursty)
+  window search on the audio thread, so `Cargo.toml` keeps `pitch` at
+  `opt-level = 3` even in the dev profile — worst callback drops from ~2.3 ms
+  to ~0.25 ms, inside the 1.33 ms budget of a 64-frame period at 48 kHz.
+  Guarded by `crates/pitch/tests/callback_budget.rs`.
 - **Winit is absent from the runtime path**: `vendor/frost` keeps winit only for
   event *data types*; constructing an `EventLoop` is grep-gated out of the tree.
 
