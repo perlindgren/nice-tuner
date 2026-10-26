@@ -356,7 +356,13 @@ impl Process for TunerUi {
             0.2,
         );
         // note label
-        let label = format!("{}{}", self.latch_name, self.latch_oct);
+        // Nothing latched yet: a plain dash — not the octave-0 placeholder
+        // that used to leak out as "–0".
+        let label = if self.latch_midi < 0 {
+            "–".to_string()
+        } else {
+            format!("{}{}", self.latch_name, self.latch_oct)
+        };
         ctx.text(0.0, 95.0 * fit, font, label, 86.4 * fit, 700.0, main, 0.2);
         // cents readout (one decimal, sign fixed for stable layout)
         // No signal, no reading: a bare dash, not a confident "+0.0¢".
