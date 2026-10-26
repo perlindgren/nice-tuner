@@ -124,6 +124,57 @@ fn find_device(backend: &str, name: &str) -> Option<cpal::Device> {
         .find(|d| d.description().ok().is_some_and(|x| x.name() == name))
 }
 
+/// The sample rate the DRIVER is currently set to. For ASIO this is
+/// `ASIOGetSampleRate` (what the Native Instruments control panel shows),
+/// for CoreAudio the device's default. The panel's "(default)" resolves
+/// through here at startup because nice-plug's own default is a hard-coded
+/// 48 kHz — which silently overrides a driver set to anything else.
+pub fn driver_default_rate(
+    backend: &str,
+    input: Option<&str>,
+    output: Option<&str>,
+) -> Option<f32> {
+    if backend == "jack" || backend == "dummy" {
+        return None; // no cpal device behind these (JACK: the server decides)
+    }
+    let host = if backend == "auto" || backend.is_empty() {
+        cpal::default_host()
+    } else {
+        open_host(backend)?
+    };
+    let in_dev = match input {
+        Some(n) => host
+            .input_devices()
+            .ok()
+            .and_then(|d| find_named(d, n))
+            .or_else(|| host.default_input_device()),
+        None => host.default_input_device(),
+    };
+    if let Some(rate) = in_dev
+        .as_ref()
+        .and_then(|d| d.default_input_config().ok())
+        .map(|c| c.sample_rate() as f32)
+    {
+        return Some(rate);
+    }
+    let out_dev = match output {
+        Some(n) => host
+            .output_devices()
+            .ok()
+            .and_then(|d| find_named(d, n))
+            .or_else(|| host.default_output_device()),
+        None => host.default_output_device(),
+    };
+    out_dev
+        .as_ref()
+        .and_then(|d| d.default_output_config().ok())
+        .map(|c| c.sample_rate() as f32)
+}
+
+fn find_named(mut devs: impl Iterator<Item = cpal::Device>, want: &str) -> Option<cpal::Device> {
+    devs.find(|d| d.description().ok().is_some_and(|x| x.name() == want))
+}
+
 const DEFAULT_RATES: [f32; 4] = [44100.0, 48000.0, 88200.0, 96000.0];
 /// Every size offered when the device permits it — the ladder reaches from
 /// the 8-frame floors real ASIO control panels use up to 4096.

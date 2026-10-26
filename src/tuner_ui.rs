@@ -108,6 +108,9 @@ pub struct TunerUi {
     input_opts: Vec<String>,
     output_opts: Vec<String>,
     rate_opts: Vec<String>,
+    /// Rate the driver itself is set to, if known — what "(default)"
+    /// resolves to at startup (see main.rs / devices::driver_default_rate).
+    driver_rate: Option<f32>,
     buffer_opts: Vec<String>,
     save_note: Option<String>,
     // ---- analysis. This is the UI thread (nice-plug's main thread, pumped
@@ -159,6 +162,7 @@ impl TunerUi {
             input_opts: Vec::new(),
             output_opts: Vec::new(),
             rate_opts: Vec::new(),
+            driver_rate: None,
             buffer_opts: Vec::new(),
             save_note: None,
             rb,
@@ -681,15 +685,21 @@ impl TunerUi {
             self.input_opts = crate::devices::list_input_devices(&b);
             self.output_opts = crate::devices::list_output_devices(&b);
         }
+        // A saved device the current enumeration does not list is KEPT,
+        // not dropped: ASIO enumeration is driver-flaky (cold starts,
+        // driver-busy moments), and silently nulling the user's choice
+        // here persisted "back to default" files on the next Apply.
+        // Instead the saved name joins the option list, so it stays
+        // visible and re-selectable even while enumeration is blind.
         if let Some(d) = &self.settings.input_device
             && !self.input_opts.contains(d)
         {
-            self.settings.input_device = None;
+            self.input_opts.insert(0, d.clone());
         }
         if let Some(d) = &self.settings.output_device
             && !self.output_opts.contains(d)
         {
-            self.settings.output_device = None;
+            self.output_opts.insert(0, d.clone());
         }
         self.refresh_stream_options();
     }
@@ -704,6 +714,8 @@ impl TunerUi {
                 crate::devices::stream_options(&backend, input.as_deref(), output.as_deref());
             self.rate_opts = rates.iter().map(|r| fmt_rate(*r)).collect();
             self.buffer_opts = buffers.iter().map(|b| b.to_string()).collect();
+            self.driver_rate =
+                crate::devices::driver_default_rate(&backend, input.as_deref(), output.as_deref());
         }
     }
 
@@ -877,11 +889,15 @@ impl TunerUi {
                 .find(|(id, _)| id == self.backend_key())
                 .map(|(_, l)| l.clone())
                 .unwrap_or_else(|| self.backend_key().to_owned()),
-            Dropdown::Rate => self
-                .settings
-                .sample_rate
-                .map(fmt_rate)
-                .unwrap_or_else(|| "(default)".into()),
+            Dropdown::Rate => match self.settings.sample_rate {
+                // "(default)" now genuinely means the driver's own rate —
+                // say which one, or the setting looks arbitrary.
+                None => match self.driver_rate {
+                    Some(r) => format!("{} (driver)", fmt_rate(r)),
+                    None => "(default)".into(),
+                },
+                Some(r) => fmt_rate(r),
+            },
             Dropdown::Buffer => self
                 .settings
                 .period_size

@@ -14,6 +14,21 @@ fn main() {
         eprintln!("nice-tuner: {warning}");
     }
 
+    // "(default)" sample rate means the rate the DRIVER is set to (the NI
+    // control panel's number), not nice-plug's hard-coded 48 kHz. Resolve
+    // it once here; an explicit file value or -r/--sample-rate still wins
+    // (effective_args applies CLI-over-file precedence as usual).
+    let mut settings = settings;
+    if settings.sample_rate.is_none()
+        && let Some(rate) = nice_tuner::devices::driver_default_rate(
+            settings.backend.as_deref().unwrap_or("auto"),
+            settings.input_device.as_deref(),
+            settings.output_device.as_deref(),
+        )
+    {
+        settings.sample_rate = Some(rate);
+    }
+
     // Open-attempt loop: ASIO is exclusive per driver, so "device refuses
     // to open" is usually transient — the previous instance (Apply &
     // restart) is still releasing it, or a host like Reaper owns it right
