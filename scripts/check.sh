@@ -19,11 +19,8 @@ cargo check
 echo "== standalone check =="
 cargo check --features standalone
 
-echo "== tests: pitch crate =="
-cargo test --manifest-path crates/pitch/Cargo.toml
-
-echo "== tests: frost fork (pure-logic) =="
-cargo test --manifest-path vendor/frost/Cargo.toml
+echo "== tests: workspace (all members + doctests) =="
+cargo test --workspace
 
 echo "== winit event-loop grep gate =="
 if grep -rn "EventLoop\|ActiveEventLoop\|ApplicationHandler\|WindowAttributes" vendor/frost/src --include='*.rs' \
