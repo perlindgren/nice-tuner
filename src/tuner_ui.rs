@@ -799,7 +799,11 @@ impl TunerUi {
         };
         self.rate_opts = s.rates.iter().map(|r| fmt_rate(*r)).collect();
         self.buffer_opts = s.buffers.iter().map(|b| b.to_string()).collect();
-        self.driver_rate = s.driver_rate;
+        // QUERIED, REMEMBERED: a driver rate once learned is never
+        // cleared by a later blind refresh (driver busy, enumeration
+        // hiccup) — the page would forget the truth in front of the
+        // user's eyes. New answers overwrite; silence keeps the last.
+        self.driver_rate = s.driver_rate.or(self.driver_rate);
         if let Some(p) = self.settings.period_size
             && !self.buffer_opts.contains(&p.to_string())
         {
@@ -873,6 +877,19 @@ impl TunerUi {
         }
     }
 
+    /// Best-known driver rate. A fresh query wins; otherwise the value
+    /// remembered at boot — the file's rate EQUALS what this process
+    /// started with, so it was driver-resolved, not a draft the user
+    /// is choosing right now. Queried once, remembered: a blind
+    /// moment never erases the truth into a dash.
+    fn driver_rate_known(&self) -> Option<f32> {
+        self.driver_rate.or_else(|| {
+            self.settings
+                .sample_rate
+                .filter(|r| self.applied.sample_rate == Some(*r))
+        })
+    }
+
     /// The concrete value the default hides — shown wherever the word
     /// "(default)" used to stand. None = genuinely unknowable (no system
     /// default device, silent driver) → rendered as an em dash.
@@ -886,7 +903,7 @@ impl TunerUi {
                 .unwrap_or_else(|| "auto".to_owned()),
             Dropdown::Input => self.default_in.clone()?,
             Dropdown::Output => self.default_out.clone()?,
-            Dropdown::Rate => fmt_rate(self.driver_rate?),
+            Dropdown::Rate => fmt_rate(self.driver_rate_known()?),
             Dropdown::Buffer => self.buffer_default().to_string(),
             Dropdown::InputCh => "1".to_owned(),
             Dropdown::A4 => "440".to_owned(),
@@ -978,7 +995,10 @@ impl TunerUi {
             Dropdown::Backend => "auto".to_owned(),
             Dropdown::Input => self.default_in.clone().unwrap_or_default(),
             Dropdown::Output => self.default_out.clone().unwrap_or_default(),
-            Dropdown::Rate => self.driver_rate.map(|r| r.to_string()).unwrap_or_default(),
+            Dropdown::Rate => self
+                .driver_rate_known()
+                .map(|r| r.to_string())
+                .unwrap_or_default(),
             Dropdown::Buffer => self.buffer_default().to_string(),
             Dropdown::InputCh => "1".to_owned(),
             Dropdown::A4 => "440".to_owned(),
@@ -1013,7 +1033,7 @@ impl TunerUi {
                 .settings
                 .sample_rate
                 .map(|r| r.to_string())
-                .or_else(|| self.driver_rate.map(|r| r.to_string()))
+                .or_else(|| self.driver_rate_known().map(|r| r.to_string()))
                 .unwrap_or_default(),
             Dropdown::Buffer => self
                 .settings

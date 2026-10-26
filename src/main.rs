@@ -38,6 +38,9 @@ fn main() {
     // control panel's number), not nice-plug's hard-coded 48 kHz. Resolve
     // it once here; an explicit file value or -r/--sample-rate still wins
     // (effective_args applies CLI-over-file precedence as usual).
+    // The answer is WRITTEN BACK: this boot's rate is then known to the
+    // settings page even when a later ASIO query lands blind — queried
+    // once, remembered, not re-guessed.
     let mut settings = settings;
     if settings.sample_rate.is_none()
         && let Some(rate) = nice_tuner::devices::driver_default_rate(
@@ -47,6 +50,9 @@ fn main() {
         )
     {
         settings.sample_rate = Some(rate);
+        if let Err(e) = settings.save() {
+            eprintln!("nice-tuner: could not remember driver rate: {e}");
+        }
     }
 
     // Open-attempt loop: ASIO is exclusive per driver, so "device refuses

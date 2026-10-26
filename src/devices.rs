@@ -343,7 +343,24 @@ pub fn snapshot_via_child(
     }
     let out = cmd.output().ok()?;
     if !out.status.success() {
+        eprintln!(
+            "nice-tuner: device-helper exited {:?}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
         return None;
     }
-    serde_json::from_slice(&out.stdout).ok()
+    match serde_json::from_slice(&out.stdout) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            eprintln!(
+                "nice-tuner: device-helper output unreadable: {e}: {}",
+                String::from_utf8_lossy(&out.stdout)
+                    .chars()
+                    .take(160)
+                    .collect::<String>()
+            );
+            None
+        }
+    }
 }
