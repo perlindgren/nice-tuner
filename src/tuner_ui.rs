@@ -106,6 +106,10 @@ pub struct TunerUi {
     /// "restart required" is exactly: saved differs from these. (Params
     /// outside this class apply live and never mark a restart.)
     applied: Settings,
+    /// The settings exactly as last SAVED — boot file, APPLY, or RESET.
+    /// APPLY is clickable only while the draft differs from this:
+    /// when there is nothing to write, there is nothing to press.
+    saved: Settings,
     settings_loaded: bool,
     devices_loaded: bool,
     open_dropdown: Option<Dropdown>,
@@ -171,6 +175,7 @@ impl TunerUi {
             settings: Settings::default(),
             esc_held: false,
             applied: Settings::default(),
+            saved: Settings::default(),
             settings_loaded: false,
             devices_loaded: false,
             open_dropdown: None,
@@ -278,6 +283,7 @@ impl Process for TunerUi {
         if !self.settings_loaded {
             let (settings, _) = Settings::load();
             self.applied = settings.clone();
+            self.saved = settings.clone();
             self.settings = settings;
             self.settings_loaded = true;
         }
@@ -1229,6 +1235,25 @@ impl TunerUi {
             || a.input_latency != s.input_latency
     }
 
+    /// Anything to write at all: draft differs from the last save.
+    /// Window GEOMETRY is excluded — it persists on its own (moved or
+    /// resized, debounced; plus a flush at close), so counting it
+    /// would keep APPLY perpetually "dirty" for merely using the app.
+    fn apply_dirty(&self) -> bool {
+        let (a, s) = (&self.saved, &self.settings);
+        a.backend != s.backend
+            || a.input_device != s.input_device
+            || a.output_device != s.output_device
+            || a.sample_rate != s.sample_rate
+            || a.period_size != s.period_size
+            || a.input_latency != s.input_latency
+            || a.a4_ref != s.a4_ref
+            || a.gate_db != s.gate_db
+            || a.input_channel != s.input_channel
+            || a.in_tune_cents != s.in_tune_cents
+            || a.gauge_knee_cents != s.gauge_knee_cents
+    }
+
     fn process_settings_page(&mut self, ctx: &mut Context, clicked: bool) {
         let (w, h) = ctx.size();
         let fit = (w / 720.0).min(h / 440.0).max(0.45);
@@ -1327,9 +1352,12 @@ impl TunerUi {
         };
         let aw = (ctx.text_width(&font, apply_label, 23.4 * fit, 700.0) + 26.0 * fit) / 2.0;
         let ax = w / 2.0 - 32.0 * fit - aw; // right-aligned with a margin
+        // Nothing differs from the last save: the button stays, greyed,
+        // and swallows nothing — there is no click when there is no do.
+        let dirty = self.apply_dirty();
         let back = point_in(mouse, -w / 2.0 + 90.0 * fit, by, 65.0 * fit, 15.0 * fit);
         let reset = point_in(mouse, 0.0, by, 65.0 * fit, 15.0 * fit);
-        let apply = point_in(mouse, ax, by, aw, 15.0 * fit);
+        let apply = dirty && point_in(mouse, ax, by, aw, 15.0 * fit);
         ctx.rectangle(
             -w / 2.0 + 90.0 * fit,
             by,
@@ -1366,7 +1394,20 @@ impl TunerUi {
             if reset { AMBER } else { DIM },
             z + 0.01,
         );
-        ctx.rectangle(ax, by, aw, 15.0 * fit, if apply { HOVER } else { TRACK }, z);
+        ctx.rectangle(
+            ax,
+            by,
+            aw,
+            15.0 * fit,
+            if apply {
+                HOVER
+            } else if dirty {
+                TRACK
+            } else {
+                BG
+            },
+            z,
+        );
         ctx.text(
             ax,
             by,
@@ -1374,7 +1415,13 @@ impl TunerUi {
             apply_label,
             23.4 * fit,
             700.0,
-            if apply { AMBER } else { GREEN },
+            if apply {
+                AMBER
+            } else if dirty {
+                GREEN
+            } else {
+                DIM
+            },
             z + 0.01,
         );
 
@@ -1494,7 +1541,10 @@ impl TunerUi {
                     self.shared.input_channel.store(1);
                     self.refresh_devices();
                     self.save_note = match self.settings.save() {
-                        Ok(()) => Some("settings reset to defaults".to_string()),
+                        Ok(()) => {
+                            self.saved = self.settings.clone();
+                            Some("settings reset to defaults".to_string())
+                        }
                         Err(e) => Some(format!("save failed: {e}")),
                     };
                 }
@@ -1516,10 +1566,16 @@ impl TunerUi {
                         });
                     }
                     match self.settings.save() {
-                        // Only an audio-class change restarts; a pure
-                        // param save is already live — say so.
-                        Ok(()) if self.audio_dirty() => crate::request_restart(),
-                        Ok(()) => self.save_note = Some("saved — applied live".to_string()),
+                        // The draft IS the file now — APPLY falls grey
+                        // until something differs again.
+                        Ok(()) if self.audio_dirty() => {
+                            self.saved = self.settings.clone();
+                            crate::request_restart();
+                        }
+                        Ok(()) => {
+                            self.saved = self.settings.clone();
+                            self.save_note = Some("saved — applied live".to_string());
+                        }
                         Err(e) => self.save_note = Some(format!("save failed: {e}")),
                     }
                 }
