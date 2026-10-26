@@ -88,14 +88,12 @@ pub struct TunerUi {
     /// Meter: current input level (bar), RMS-based, EMA-smoothed every
     /// frame (fast attack, moderate release).
     meter_level_db: f32,
-    /// Meter: peak marker position (drawn). Holds flat for 1 s after the
-    /// last new max, then falls at a constant dB/s; nothing re-catches it
-    /// during the fall — only input beating PEAK_REF re-ratchets it up.
+    /// Meter: peak marker. Input exceeding the SHOWN marker jumps it up and
+    /// re-arms the 1 s stick; when the stick lapses it falls at a constant
+    /// dB/s toward the current level — so it can never sit below a signal
+    /// that is louder than it looks.
     meter_peak_db: f32,
-    /// The held max the timer guards: only input exceeding THIS re-ratchets
-    /// (input merely beating the *falling marker* does not).
-    meter_peak_ref_db: f32,
-    /// Wall-clock ms when the current hold ends.
+    /// Wall-clock ms when the current stick ends.
     meter_peak_until_ms: u64,
     /// Wall-clock ms of the previous meter tick (real dt for the decay).
     meter_last_ms: u64,
@@ -151,7 +149,6 @@ impl TunerUi {
             latch_midi: -1,
             meter_level_db: -120.0,
             meter_peak_db: -120.0,
-            meter_peak_ref_db: -120.0,
             meter_peak_until_ms: 0,
             meter_last_ms: crate::now_epoch_ms(),
             latch_name: "–",
@@ -258,17 +255,15 @@ impl TunerUi {
             };
             self.meter_level_db += (rms_db - self.meter_level_db) * k;
         }
-        // Peak ballistics, per spec: input beating the HELD max ratchets
-        // the marker up and arms a 1 s hold — the only thing that arms it.
-        // After the hold expires the marker falls at a constant 24 dB/s,
-        // uninterrupted: a still-playing signal under the held max must not
-        // re-catch the falling marker (that made the old mid-fall plateau).
-        // A genuine rise still beats the ref and re-ratchets, any time.
+        // Peak ballistics, per spec: the timer is (re-)applied whenever the
+        // input exceeds the currently SHOWN marker — which also lifts the
+        // marker to that level. With no such exceedance for a full second,
+        // the marker falls at 24 dB/s, floor-pinned at the live level, so a
+        // fall that runs into a louder signal simply sticks again.
         let now = crate::now_epoch_ms();
         let dt = (now - self.meter_last_ms).min(200) as f32 / 1000.0;
         self.meter_last_ms = now;
-        if frame_peak_db > self.meter_peak_ref_db {
-            self.meter_peak_ref_db = frame_peak_db;
+        if frame_peak_db > self.meter_peak_db {
             self.meter_peak_db = frame_peak_db;
             self.meter_peak_until_ms = now + 1000;
         } else if now >= self.meter_peak_until_ms {
