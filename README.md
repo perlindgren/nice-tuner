@@ -48,6 +48,10 @@ target/debug/nice-tuner-standalone --backend asio --input-device "Komplete Input
 # scary but harmless "cannot connect to named pipe server_jack_default_0" noise
 # before it falls back to WASAPI. Pin the backend to skip the probe entirely.
 
+# Coexisting with a DAW on one ASIO device (the NI Komplete driver allows
+# multi-process ASIO): all clients must use the SAME buffer size — run the
+# tuner with -p matching the DAW (e.g. -p 64) or the second open fails/glitches.
+
 # nice-plug's --input-latency default (150 ms of input-vs-output alignment
 # slack) is audibly wrong for a tuner; the standalone lowers it to 5 ms on
 # its own. Override either way with an explicit --input-latency.
