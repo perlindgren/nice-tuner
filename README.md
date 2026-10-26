@@ -88,10 +88,11 @@ This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
 ## Settings panel (standalone)
 
 The standalone app's tuner screen has a `SETTINGS` button (top-right) opening a
-panel for **backend, sample rate, buffer size, and input/output devices** —
-device dropdowns are enumerated live via cpal (ASIO appears only in builds with
-`--features standalone-asio`; enumeration loads each registered ASIO driver, so
-the first open can pause a moment where several are installed).
+panel for **backend, sample rate, buffer size, input/output devices — and the
+A4/gate params** — device dropdowns are enumerated live via cpal (ASIO appears
+only in builds with `--features standalone-asio`; enumeration loads each
+registered ASIO driver, so the first open can pause a moment where several are
+installed).
 
 - **Persistence**: `APPLY & RESTART` writes `nice-tuner-settings.json` to the
   **current directory**; it is read again at every startup.
@@ -105,6 +106,36 @@ the first open can pause a moment where several are installed).
 - **Inside a DAW there is deliberately no panel** (the footer reads
   `audio: host-managed`): the host owns the audio device; a per-plugin device
   picker would lie.
+
+## Standalone fidelity (what you see embedded)
+
+The standalone binary links the *same* lib as the CLAP/VST3 artifacts — same
+`TunerPlugin`, same editor/window code, same param objects, same RT
+discipline. What differs is the environment around it, and the panel closes
+the one functional gap: **params**. nice-plug gives plugins no way to move
+their own `FloatParam`s (the host owns them), so in standalone the settings
+page plays the host: the A4/gate pickers write the very same shared atomics
+that `process()` mirrors from params in host mode (`process()` skips the
+mirror in standalone so your picks survive). Picks are live; `APPLY` persists
+them to the settings file, which seeds them at next launch.
+
+| Aspect | Standalone | Embedded |
+|---|---|---|
+| DSP, editor, GUI, RT path | identical code | identical code |
+| Device / backend / sample rate | own process, cpal | host's device & rate |
+| Param controls | settings panel (plays host) | host's plugin UI & automation |
+| UI pump | own event loop, ~60 fps | host pumps the editor window |
+| Editor lifecycle | closing the window ends the app | close/reopen freely, audio unaffected |
+
+The last two rows are environment properties only a real host can prove.
+One-time verification checklist in Reaper (load the CLAP from `target/bundled`):
+
+- [ ] A4 Reference + Gate appear in the host's param list; automation works.
+- [ ] Close the plugin window while audio runs: no glitch; reopen: meter and
+      needle resume (ring park/restore works).
+- [ ] Change the project sample rate (44.1 ↔ 96k): the detector rebuilds and
+      notes track again within a strum.
+- [ ] Resize the embedded window and check DPI scaling; nothing clips or blurs.
 
 ## Licensing
 

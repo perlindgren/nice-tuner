@@ -486,7 +486,18 @@ enum Dropdown {
     Buffer,
     Input,
     Output,
+    /// Plugin-param pickers. In a host the host renders these controls;
+    /// standalone has none, so the panel plays that role — same atomics the
+    /// `process()` mirror feeds in host mode (see lib.rs).
+    A4,
+    Gate,
 }
+
+/// Sensible tuning-standards list; 440 sits mid-list.
+const A4_OPTIONS: [f32; 9] = [
+    432.0, 438.0, 439.0, 440.0, 441.0, 442.0, 443.0, 444.0, 446.0,
+];
+const GATE_OPTIONS: [f32; 7] = [-80.0, -70.0, -60.0, -50.0, -40.0, -30.0, -20.0];
 
 fn point_in(p: Option<[f32; 2]>, cx: f32, cy: f32, hw: f32, hh: f32) -> bool {
     p.is_some_and(|[x, y]| (x - cx).abs() <= hw && (y - cy).abs() <= hh)
@@ -582,6 +593,8 @@ impl TunerUi {
             Dropdown::Output => with_default(&self.output_opts),
             Dropdown::Rate => with_default(&self.rate_opts),
             Dropdown::Buffer => with_default(&self.buffer_opts),
+            Dropdown::A4 => A4_OPTIONS.iter().map(|v| format!("{v:.0} Hz")).collect(),
+            Dropdown::Gate => GATE_OPTIONS.iter().map(|v| format!("{v:.0} dB")).collect(),
         }
     }
 
@@ -610,6 +623,14 @@ impl TunerUi {
                 .period_size
                 .and_then(|p| self.buffer_opts.iter().position(|s| *s == p.to_string()))
                 .map_or(0, |i| i + 1),
+            Dropdown::A4 => A4_OPTIONS
+                .iter()
+                .position(|v| (*v as f64 - self.shared.a4_ref()).abs() < 0.05)
+                .unwrap_or(0),
+            Dropdown::Gate => GATE_OPTIONS
+                .iter()
+                .position(|v| (*v - self.shared.gate_db.load()).abs() < 0.05)
+                .unwrap_or(0),
         }
     }
 
@@ -654,6 +675,22 @@ impl TunerUi {
                     self.buffer_opts.get(idx - 1).and_then(|s| s.parse().ok())
                 };
             }
+            // Params are live the moment they are picked (no restart needed);
+            // APPLY only decides whether they persist to the next launch.
+            Dropdown::A4 => {
+                if let Some(v) = A4_OPTIONS.get(idx) {
+                    self.shared
+                        .a4_ref_bits
+                        .store((*v as f64).to_bits(), Ordering::Relaxed);
+                    self.settings.a4_ref = Some(*v);
+                }
+            }
+            Dropdown::Gate => {
+                if let Some(v) = GATE_OPTIONS.get(idx) {
+                    self.shared.gate_db.store(*v);
+                    self.settings.gate_db = Some(*v);
+                }
+            }
         }
         self.open_dropdown = None;
         self.list_scroll = 0.0;
@@ -689,6 +726,8 @@ impl TunerUi {
                 .as_deref()
                 .map(|d| clip(d, 26))
                 .unwrap_or_else(|| "(system default)".into()),
+            Dropdown::A4 => format!("{:.1} Hz", self.shared.a4_ref()),
+            Dropdown::Gate => format!("{:.0} dB", self.shared.gate_db.load()),
         }
     }
 
@@ -699,14 +738,16 @@ impl TunerUi {
         let font = std::sync::Arc::clone(&self.font);
         let z = 0.4f32;
 
-        const ROWS: [(&str, Dropdown); 5] = [
+        const ROWS: [(&str, Dropdown); 7] = [
             ("Backend", Dropdown::Backend),
             ("Sample rate", Dropdown::Rate),
             ("Buffer (frames)", Dropdown::Buffer),
             ("Input device", Dropdown::Input),
             ("Output device", Dropdown::Output),
+            ("A4 reference", Dropdown::A4),
+            ("Input gate", Dropdown::Gate),
         ];
-        let row_y = |i: usize| h / 2.0 - 84.0 * fit - i as f32 * 42.0 * fit;
+        let row_y = |i: usize| h / 2.0 - 78.0 * fit - i as f32 * 38.0 * fit;
         let bx = w / 2.0 - 185.0 * fit; // value-button column
         let bhw = 165.0 * fit;
         let bhh = 14.0 * fit;
@@ -812,8 +853,8 @@ impl TunerUi {
                 by + 34.0 * fit,
                 &font,
                 format!(
-                    "saved to {} · Apply restarts the tuner",
-                    crate::settings::FILE_NAME
+                    "saved to {} · audio: Apply restarts · A4/gate: live, saved on Apply",
+                    crate::settings::FILE_NAME,
                 ),
                 11.0 * fit,
                 400.0,

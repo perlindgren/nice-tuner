@@ -36,6 +36,11 @@ pub struct Settings {
     /// The alignment slack, in seconds, nice-plug inserts between its
     /// independent input and output streams.
     pub input_latency: Option<f32>,
+    /// Plugin params, standalone-only. Inside a host these belong to the
+    /// host (state save/load); standalone has no host, so the settings page
+    /// plays that role. Not CLI flags — never fed to `effective_args`.
+    pub a4_ref: Option<f32>,
+    pub gate_db: Option<f32>,
 }
 
 impl Settings {

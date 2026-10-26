@@ -139,6 +139,47 @@ pub fn restart_requested() -> bool {
     RESTART_REQUESTED.load(Ordering::Relaxed)
 }
 
+/// Standalone param ownership: with no host to drive `FloatParam`s, the
+/// saved file (and later the settings page) owns A4/gate. Pure function of
+/// (state, settings) so it is unit-testable without process-global mode.
+pub fn seed_standalone_params(shared: &TunerSharedState, s: &settings::Settings) {
+    if let Some(a4) = s.a4_ref {
+        shared
+            .a4_ref_bits
+            .store((a4 as f64).to_bits(), Ordering::Relaxed);
+    }
+    if let Some(gate) = s.gate_db {
+        shared.gate_db.store(gate);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standalone_seeding_applies_params_and_skips_absences() {
+        let shared = TunerSharedState::new();
+        assert_eq!(shared.a4_ref(), 440.0); // default untouched
+
+        seed_standalone_params(
+            &shared,
+            &settings::Settings {
+                a4_ref: Some(432.0),
+                gate_db: Some(-45.0),
+                ..Default::default()
+            },
+        );
+        assert_eq!(shared.a4_ref(), 432.0);
+        assert_eq!(shared.gate_db.load(), -45.0);
+
+        // Absent fields must not clobber: values survive a seed pass.
+        seed_standalone_params(&shared, &settings::Settings::default());
+        assert_eq!(shared.a4_ref(), 432.0);
+        assert_eq!(shared.gate_db.load(), -45.0);
+    }
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Editor + handle (nice-plug integration)
 
@@ -365,6 +406,13 @@ impl Default for TunerPlugin {
         let (producer, consumer) = rtrb::RingBuffer::new(1 << 15);
         let shared = Arc::new(TunerSharedState::new());
         shared.put_consumer(consumer);
+        if STANDALONE_MODE.load(Ordering::Relaxed) {
+            // Standalone: no host exists to move params, so the settings
+            // page owns A4/gate. Seed from the saved file; `process()`
+            // leaves the mirrors alone in this mode (see below).
+            let (s, _warning) = settings::Settings::load();
+            seed_standalone_params(&shared, &s);
+        }
         Self {
             params: Arc::new(TunerParams::default()),
             shared,
@@ -458,12 +506,17 @@ impl Plugin for TunerPlugin {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // Param mirrors for the GUI thread (cheap, once per block).
-        self.shared.a4_ref_bits.store(
-            (self.params.a4_ref.value() as f64).to_bits(),
-            Ordering::Relaxed,
-        );
-        self.shared.gate_db.store(self.params.gate_db.value());
+        // Param mirrors for the GUI thread (cheap, once per block). Host-mode
+        // only: the host owns params there. In standalone the panel writes
+        // these atomics directly, and params never move (nothing drives them),
+        // so mirroring would overwrite the user's edits every block.
+        if !STANDALONE_MODE.load(Ordering::Relaxed) {
+            self.shared.a4_ref_bits.store(
+                (self.params.a4_ref.value() as f64).to_bits(),
+                Ordering::Relaxed,
+            );
+            self.shared.gate_db.store(self.params.gate_db.value());
+        }
 
         if self.shared.is_open() {
             // Buffer is in-place (the framework copied host input into it);
