@@ -85,11 +85,14 @@ pub struct TunerUi {
     // smoothed display state
     needle_cents: f32, // EMA'd cents shown on the gauge
     latch_midi: i16,   // -1 = nothing latched
-    /// Meter level in dBFS: peak + hold semantics (instant attack on the
-    /// frame peak, hold, then slow release toward the ongoing RMS level).
-    meter_db: f32,
-    /// Frames left on the current peak hold (~60/s).
-    peak_hold: u32,
+    /// Meter: current input level (bar), RMS-based, EMA-smoothed every
+    /// frame (fast attack, moderate release).
+    meter_level_db: f32,
+    /// Meter: max peak (marker). Sticks for 1 s, timer resets whenever a
+    /// frame beats it; afterwards eases toward the current level.
+    meter_peak_db: f32,
+    /// Wall-clock ms until the current peak stops holding (fps-independent).
+    peak_hold_until_ms: u64,
     latch_name: &'static str,
     latch_oct: i8,
     cents_shown: f64,
@@ -140,8 +143,9 @@ impl TunerUi {
             font,
             needle_cents: 0.0,
             latch_midi: -1,
-            meter_db: -120.0,
-            peak_hold: 0,
+            meter_level_db: -120.0,
+            meter_peak_db: -120.0,
+            peak_hold_until_ms: 0,
             latch_name: "–",
             latch_oct: 0,
             cents_shown: 0.0,
@@ -227,9 +231,13 @@ impl TunerUi {
                     .store(crate::now_epoch_ms(), Ordering::Relaxed);
             }
         }
-        // Peak + hold metering: attack instantly to this frame's PEAK,
-        // hold it ~1.5 s, then release slowly toward the frame RMS — the
-        // classic PPM behavior that makes pick attacks readable.
+        // Two-layer metering, both updated every frame:
+        //   bar   — current level (RMS), EMA with fast attack / moderate
+        //           release, always chasing the ongoing signal;
+        //   peak  — the max of frame peaks, STICKS for 1 s (wall-clock, so
+        //           the hold is fps-independent); any frame that beats the
+        //           held peak jumps to it and RESETS the 1 s timer; once
+        //           expired it eases down toward the current bar level.
         let db_of = |a: f64| -> f32 {
             if a > 1e-7 {
                 (20.0 * a.log10()) as f32
@@ -242,14 +250,20 @@ impl TunerUi {
         } else {
             -120.0
         };
-        let peak_db = db_of(peak);
-        if peak_db >= self.meter_db {
-            self.meter_db = peak_db;
-            self.peak_hold = 90;
-        } else if self.peak_hold > 0 {
-            self.peak_hold -= 1; // sit at the held peak
-        } else {
-            self.meter_db += (rms_db - self.meter_db) * 0.08; // slow decay
+        let frame_peak_db = db_of(peak);
+        {
+            let k = if rms_db > self.meter_level_db {
+                0.5 // fast attack
+            } else {
+                0.08 // moderate release
+            };
+            self.meter_level_db += (rms_db - self.meter_level_db) * k;
+        }
+        if frame_peak_db >= self.meter_peak_db {
+            self.meter_peak_db = frame_peak_db;
+            self.peak_hold_until_ms = crate::now_epoch_ms() + 1000;
+        } else if crate::now_epoch_ms() >= self.peak_hold_until_ms {
+            self.meter_peak_db += (self.meter_level_db - self.meter_peak_db) * 0.06;
         }
     }
 }
@@ -461,10 +475,10 @@ impl Process for TunerUi {
                     0.06,
                 );
             }
-            // Live numeric truth next to the bar: RMS dBFS of exactly the
-            // samples the meter draws — no need to trust the geometry.
-            let readout = if self.meter_db > -119.0 {
-                format!("{:.1} dBFS", self.meter_db)
+            // Numeric truth next to the bar: the held peak dBFS of exactly
+            // the samples the meter draws — no need to trust the geometry.
+            let readout = if self.meter_peak_db > -119.0 {
+                format!("{:.1} dBFS", self.meter_peak_db)
             } else {
                 "−∞ dBFS".to_string()
             };
@@ -478,7 +492,8 @@ impl Process for TunerUi {
                 DIM,
                 0.07,
             );
-            let m = self.meter_db.clamp(-48.0, 0.0);
+            // Bar: current level.
+            let m = self.meter_level_db.clamp(-48.0, 0.0);
             let xv = half * (1.0 + m / 24.0);
             if xv > -half + 0.5 {
                 ctx.rectangle(
@@ -490,6 +505,13 @@ impl Process for TunerUi {
                     main,
                     0.07,
                 );
+            }
+            // Peak marker: a thin bright line at the held peak, above the
+            // bar in z; sits at the bar while rising, sticks after it falls.
+            let p = self.meter_peak_db.clamp(-48.0, 0.0);
+            let px = half * (1.0 + p / 24.0);
+            if p > -47.5 {
+                ctx.rectangle(px, y, 1.5 * fit, 6.0 * fit, Color { a: 0.9, ..FG }, 0.08);
             }
         }
     }
