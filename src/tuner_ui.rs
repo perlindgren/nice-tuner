@@ -41,6 +41,9 @@ const AMBER: Color = rgb(0xe8, 0xa3, 0x3d);
 const GREEN: Color = rgb(0x4a, 0xde, 0x80);
 const DIM: Color = rgb(0x6b, 0x72, 0x80);
 const TRACK: Color = rgb(0x2a, 0x24, 0x3d);
+/// Dropdown well: distinctly darker than the page so the open list reads as
+/// a cut-in surface; a near-page tint was invisible against the background.
+const MENU_BG: Color = rgb(0x0d, 0x0a, 0x16);
 const HOVER: Color = rgb(0x3a, 0x33, 0x4f);
 const FG: Color = rgb(0xe6, 0xe6, 0xea);
 
@@ -911,19 +914,7 @@ impl TunerUi {
                 let ph = (top - bottom) * 0.5 + pad;
                 let pw = bhw + pad;
                 ctx.rectangle(bx, py, pw + 1.5 * fit, ph + 1.5 * fit, HOVER, 0.44);
-                ctx.rectangle(
-                    bx,
-                    py,
-                    pw,
-                    ph,
-                    Color {
-                        a: 1.0,
-                        r: BG.r,
-                        g: BG.g,
-                        b: BG.b + 0.02,
-                    },
-                    0.445,
-                );
+                ctx.rectangle(bx, py, pw, ph, MENU_BG, 0.445);
             }
 
             for (idx, label) in items
@@ -943,12 +934,14 @@ impl TunerUi {
                     ih,
                     if hov {
                         HOVER
+                    } else if sel {
+                        TRACK
                     } else {
                         Color {
-                            a: 0.96,
-                            r: BG.r + 0.05,
-                            g: BG.g + 0.05,
-                            b: BG.b + 0.07,
+                            a: 0.0,
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
                         }
                     },
                     z + 0.05,
