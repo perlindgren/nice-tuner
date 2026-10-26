@@ -88,10 +88,15 @@ pub struct TunerUi {
     /// Meter: current input level (bar), RMS-based, EMA-smoothed every
     /// frame (fast attack, moderate release).
     meter_level_db: f32,
-    /// Meter: peak marker. Analog-ballistics: rises instantly whenever the
-    /// input beats it (that IS the timer reset — no dead hold interval),
-    /// otherwise slides down at a constant dB/s toward the current level.
+    /// Meter: peak marker position (drawn). Holds flat for 1 s after the
+    /// last new max, then falls at a constant dB/s; nothing re-catches it
+    /// during the fall — only input beating PEAK_REF re-ratchets it up.
     meter_peak_db: f32,
+    /// The held max the timer guards: only input exceeding THIS re-ratchets
+    /// (input merely beating the *falling marker* does not).
+    meter_peak_ref_db: f32,
+    /// Wall-clock ms when the current hold ends.
+    meter_peak_until_ms: u64,
     /// Wall-clock ms of the previous meter tick (real dt for the decay).
     meter_last_ms: u64,
     latch_name: &'static str,
@@ -146,6 +151,8 @@ impl TunerUi {
             latch_midi: -1,
             meter_level_db: -120.0,
             meter_peak_db: -120.0,
+            meter_peak_ref_db: -120.0,
+            meter_peak_until_ms: 0,
             meter_last_ms: crate::now_epoch_ms(),
             latch_name: "–",
             latch_oct: 0,
@@ -251,16 +258,20 @@ impl TunerUi {
             };
             self.meter_level_db += (rms_db - self.meter_level_db) * k;
         }
-        // Instant rise whenever input beats the marker; otherwise a steady
-        // slide (24 dB/s) toward the current level — no frozen hold
-        // interval, so the descent reads continuously from the first frame
-        // after the signal drops. Real dt keeps the rate frame-rate proof.
+        // Peak ballistics, per spec: input beating the HELD max ratchets
+        // the marker up and arms a 1 s hold — the only thing that arms it.
+        // After the hold expires the marker falls at a constant 24 dB/s,
+        // uninterrupted: a still-playing signal under the held max must not
+        // re-catch the falling marker (that made the old mid-fall plateau).
+        // A genuine rise still beats the ref and re-ratchets, any time.
         let now = crate::now_epoch_ms();
         let dt = (now - self.meter_last_ms).min(200) as f32 / 1000.0;
         self.meter_last_ms = now;
-        if frame_peak_db > self.meter_peak_db {
+        if frame_peak_db > self.meter_peak_ref_db {
+            self.meter_peak_ref_db = frame_peak_db;
             self.meter_peak_db = frame_peak_db;
-        } else {
+            self.meter_peak_until_ms = now + 1000;
+        } else if now >= self.meter_peak_until_ms {
             self.meter_peak_db = (self.meter_peak_db - 24.0 * dt).max(self.meter_level_db);
         }
     }
