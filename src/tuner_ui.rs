@@ -475,23 +475,6 @@ impl Process for TunerUi {
                     0.06,
                 );
             }
-            // Numeric truth next to the bar: the held peak dBFS of exactly
-            // the samples the meter draws — no need to trust the geometry.
-            let readout = if self.meter_peak_db > -119.0 {
-                format!("{:.1} dBFS", self.meter_peak_db)
-            } else {
-                "−∞ dBFS".to_string()
-            };
-            ctx.text(
-                half - 52.0 * fit,
-                y + 12.0 * fit,
-                font,
-                readout,
-                14.0 * fit,
-                550.0,
-                DIM,
-                0.07,
-            );
             // Bar: current level.
             let m = self.meter_level_db.clamp(-48.0, 0.0);
             let xv = half * (1.0 + m / 24.0);
