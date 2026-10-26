@@ -438,9 +438,12 @@ impl Process for TunerUi {
             format!("{}{}", self.latch_name, self.latch_oct)
         };
         ctx.text(0.0, 95.0 * fit, font, label, 86.4 * fit, 700.0, main, 0.2);
-        // cents readout: TABULAR — monospaced glyphs × a constant glyph
-        // budget ("−09.9¢", never "−9.9¢") means the centered ink box has
-        // the same width for every value: digits and the dot never move.
+        // cents readout: TABULAR on a fixed pitch — every glyph lands in
+        // its own digit-width slot (see draw_tabular). Constant glyph
+        // count alone was not enough: `ctx.text` centers the INK box,
+        // and `+` versus `−` carry visibly different ink widths, so the
+        // whole line shifted a hair whenever the sign flipped. Slotted
+        // layout cannot: nothing depends on what the glyphs look like.
         // No signal, no reading: a bare dash, not a confident "+00.0¢".
         let cents_s = if signal {
             let cents = self.cents_shown;
@@ -452,11 +455,11 @@ impl Process for TunerUi {
         } else {
             "—".to_string()
         };
-        ctx.text(
+        self.draw_tabular(
+            ctx,
             0.0,
             -52.0 * fit,
-            font,
-            cents_s,
+            &cents_s,
             50.4 * fit,
             600.0,
             main,
@@ -885,6 +888,52 @@ impl TunerUi {
         }
         self.open_dropdown = None;
         self.list_scroll = 0.0;
+    }
+
+    /// Draw `text` glyph-by-glyph on a fixed advance pitch (FiraCode is
+    /// monospaced, so one digit's width is THE pitch). Each glyph is
+    /// ink-centered inside its own slot, so the line's layout depends
+    /// only on the character COUNT — signs, dots and the ¢ mark can no
+    /// longer push neighbours around. Whole-string `ctx.text` cannot
+    /// promise that: its centering follows the ink box, and glyph ink
+    /// varies (+ vs −, and future fonts).
+    #[allow(clippy::too_many_arguments)] // immediate-mode draw call, as in frost
+    fn draw_tabular(
+        &self,
+        ctx: &mut Context,
+        cx: f32,
+        cy: f32,
+        text: &str,
+        size: f32,
+        weight: f32,
+        color: Color,
+        z: f32,
+    ) {
+        let font = std::sync::Arc::clone(&self.font);
+        let pitch = ctx.text_width(&font, "0", size, weight);
+        if pitch <= 0.0 {
+            // Font cannot be shaped: fall back to a plain draw rather
+            // than silently vanishing.
+            ctx.text(cx, cy, &font, text, size, weight, color, z);
+            return;
+        }
+        let n = text.chars().count() as f32;
+        for (i, ch) in text.chars().enumerate() {
+            if ch == ' ' {
+                continue; // blanks carry layout, not ink
+            }
+            let mut buf = [0u8; 4];
+            ctx.text(
+                cx + (i as f32 - (n - 1.0) / 2.0) * pitch,
+                cy,
+                &font,
+                ch.encode_utf8(&mut buf),
+                size,
+                weight,
+                color,
+                z,
+            );
+        }
     }
 
     fn current_value_label(&self, dd: Dropdown) -> String {
