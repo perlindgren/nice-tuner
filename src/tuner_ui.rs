@@ -775,7 +775,7 @@ impl TunerUi {
             ("A4 reference", Dropdown::A4),
             ("Input gate", Dropdown::Gate),
         ];
-        let row_y = |i: usize| h / 2.0 - 78.0 * fit - i as f32 * 38.0 * fit;
+        let row_y = |i: usize| h / 2.0 - 46.0 * fit - i as f32 * 38.0 * fit;
         let bx = w / 2.0 - 185.0 * fit; // value-button column
         let bhw = 165.0 * fit;
         let bhh = 14.0 * fit;
@@ -787,16 +787,6 @@ impl TunerUi {
             self.list_scroll = (self.list_scroll + ctx.mouse_wheel() * 0.5).clamp(0.0, max_scroll);
         }
 
-        ctx.text(
-            0.0,
-            h / 2.0 - 30.0 * fit,
-            &font,
-            "AUDIO SETTINGS",
-            34.2 * fit,
-            700.0,
-            AMBER,
-            z,
-        );
         for (i, (label, dd)) in ROWS.iter().enumerate() {
             let y = row_y(i);
             let open = self.open_dropdown == Some(*dd);
