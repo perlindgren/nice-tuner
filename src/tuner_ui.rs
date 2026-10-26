@@ -121,6 +121,11 @@ pub struct TunerUi {
     /// Rate the driver itself is set to, if known — what "(default)"
     /// resolves to at startup (see main.rs / devices::driver_default_rate).
     driver_rate: Option<f32>,
+    /// The backend's last read — devices, defaults, rates, buffers —
+    /// taken in-process, or through a streamless child when this one
+    /// is ASIO-blind while streaming (devices::snapshot_via_child).
+    #[cfg(feature = "standalone")]
+    snap: Option<crate::devices::Snapshot>,
     buffer_opts: Vec<String>,
     save_note: Option<String>,
     // ---- analysis. This is the UI thread (nice-plug's main thread, pumped
@@ -177,6 +182,8 @@ impl TunerUi {
             default_in: None,
             default_out: None,
             driver_rate: None,
+            #[cfg(feature = "standalone")]
+            snap: None,
             buffer_opts: Vec::new(),
             save_note: None,
             rb,
@@ -687,24 +694,105 @@ impl TunerUi {
         self.page = Page::Settings;
     }
 
+    /// nice-plug's backend key for the devices module (standalone only;
+    /// the plugin build has no devices to enumerate).
+    #[cfg(feature = "standalone")]
     fn backend_key(&self) -> &str {
         self.settings.backend.as_deref().unwrap_or("auto")
     }
 
     /// (Re-)enumerate devices for the selected backend; selections that the
     /// new backend cannot offer fall back to "(system default)".
+    /// Read the current backend ONCE: devices, defaults, rates, buffers.
+    ///
+    /// ASIO must be asked through a child process while this one
+    /// streams: asio-sys keeps exactly ONE driver loaded (the live
+    /// stream's) and refuses every other load, so in-process
+    /// enumeration here sees only the driver already in use — device
+    /// lists come back near-empty and stream options fall through to
+    /// canned guesses (a hard-wired 64 …). A child opens no stream, so
+    /// it sees every registered driver and can ask the SELECTED device
+    /// for its real rates and buffer ranges. The live audio is never
+    /// touched: nothing is closed, nothing restarts. The parent's own
+    /// (partial) view is unioned in, so neither side's blind spot wins.
+    #[cfg(feature = "standalone")]
+    fn take_snapshot(&mut self) {
+        let backend = self.backend_key().to_owned();
+        let input = self.settings.input_device.clone();
+        let output = self.settings.output_device.clone();
+        let in_proc = || crate::devices::snapshot(&backend, input.as_deref(), output.as_deref());
+        self.snap = if backend == "asio" {
+            match crate::devices::snapshot_via_child(&backend, input.as_deref(), output.as_deref())
+            {
+                Some(mut s) => {
+                    let p = in_proc();
+                    s.inputs.extend(p.inputs);
+                    s.inputs.sort();
+                    s.inputs.dedup();
+                    s.outputs.extend(p.outputs);
+                    s.outputs.sort();
+                    s.outputs.dedup();
+                    s.rates.extend(p.rates);
+                    s.rates.sort_by(f32::total_cmp);
+                    s.rates.dedup();
+                    s.buffers.extend(p.buffers);
+                    s.buffers.sort_unstable();
+                    s.buffers.dedup();
+                    if s.def_in.is_none() {
+                        s.def_in = p.def_in;
+                    }
+                    if s.def_out.is_none() {
+                        s.def_out = p.def_out;
+                    }
+                    if s.driver_rate.is_none() {
+                        s.driver_rate = p.driver_rate;
+                    }
+                    Some(s)
+                }
+                None => Some(in_proc()),
+            }
+        } else {
+            Some(in_proc())
+        };
+    }
+
+    /// The snapshot's stream side onto the option lists, with the
+    /// stored-value keep rule (a value the settings file holds is
+    /// never dropped just because this moment's enumeration missed it).
+    #[cfg(feature = "standalone")]
+    fn apply_stream_snap(&mut self) {
+        let Some(s) = self.snap.clone() else {
+            return;
+        };
+        self.rate_opts = s.rates.iter().map(|r| fmt_rate(*r)).collect();
+        self.buffer_opts = s.buffers.iter().map(|b| b.to_string()).collect();
+        self.driver_rate = s.driver_rate;
+        if let Some(p) = self.settings.period_size
+            && !self.buffer_opts.contains(&p.to_string())
+        {
+            self.buffer_opts.insert(0, p.to_string());
+        }
+        if let Some(r) = self.settings.sample_rate
+            && !self.rate_opts.contains(&fmt_rate(r))
+        {
+            self.rate_opts.insert(0, fmt_rate(r));
+        }
+    }
+
     fn refresh_devices(&mut self) {
-        // Owned: the refresh below mutates self while enumerating from b.
-        let b = self.backend_key().to_owned();
-        #[cfg(not(feature = "standalone"))]
-        let _ = &b; // plugin build has no devices module to feed
         #[cfg(feature = "standalone")]
         {
-            self.input_opts = crate::devices::list_input_devices(&b);
-            self.output_opts = crate::devices::list_output_devices(&b);
-            let (din, dout) = crate::devices::default_device_names(&b);
-            self.default_in = din;
-            self.default_out = dout;
+            self.take_snapshot();
+            if let Some(s) = self.snap.clone() {
+                self.input_opts = s.inputs;
+                self.output_opts = s.outputs;
+                self.default_in = s.def_in;
+                self.default_out = s.def_out;
+            }
+            // The same read carries the stream side — applying it here
+            // means ONE enumeration pass per backend switch; a second
+            // child spin-up would just pay the same cost again.
+            self.apply_stream_snap();
         }
         // A saved device the current enumeration does not list is KEPT,
         // not dropped: ASIO enumeration is driver-flaky (cold starts,
@@ -722,37 +810,13 @@ impl TunerUi {
         {
             self.output_opts.insert(0, d.clone());
         }
-        self.refresh_stream_options();
     }
 
     fn refresh_stream_options(&mut self) {
         #[cfg(feature = "standalone")]
         {
-            let backend = self.backend_key().to_owned();
-            let input = self.settings.input_device.clone();
-            let output = self.settings.output_device.clone();
-            let (rates, buffers) =
-                crate::devices::stream_options(&backend, input.as_deref(), output.as_deref());
-            self.rate_opts = rates.iter().map(|r| fmt_rate(*r)).collect();
-            self.buffer_opts = buffers.iter().map(|b| b.to_string()).collect();
-            self.driver_rate =
-                crate::devices::driver_default_rate(&backend, input.as_deref(), output.as_deref());
-            // A STORED stream value the driver's current list does not
-            // offer stays in the list — same rule as saved devices.
-            // "Stored" must never silently masquerade as the default
-            // just because this moment's enumeration missed it.
-            if let Some(p) = self.settings.period_size {
-                let s = p.to_string();
-                if !self.buffer_opts.contains(&s) {
-                    self.buffer_opts.insert(0, s);
-                }
-            }
-            if let Some(r) = self.settings.sample_rate {
-                let s = fmt_rate(r);
-                if !self.rate_opts.contains(&s) {
-                    self.rate_opts.insert(0, s);
-                }
-            }
+            self.take_snapshot();
+            self.apply_stream_snap();
         }
     }
 
@@ -760,14 +824,19 @@ impl TunerUi {
     /// case where the stream never ran (measure below is the truth).
     const DEFAULT_BUFFER: u32 = 512;
 
-    /// The buffer default AS IT IS: the block size the live stream
-    /// actually got from the driver (trust the driver — the requested
-    /// default often is not the granted one), falling back to
-    /// nice-plug's baked 512 only before the first audio callback.
+    /// The buffer default AS IT IS: while the live stream matches the
+    /// settings page's current selection, that is the block size the
+    /// driver actually granted (trust the driver — the requested
+    /// default often is not the granted one). While the selection is
+    /// still pending (not applied), the honest number is what
+    /// following the default would REQUEST: nice-plug's baked 512.
     fn buffer_default(&self) -> u32 {
+        let selection_is_live = self.settings.backend == self.applied.backend
+            && self.settings.input_device == self.applied.input_device
+            && self.settings.output_device == self.applied.output_device;
         match self.shared.buffer_frames.load() {
-            0 => Self::DEFAULT_BUFFER,
-            n => n,
+            n if selection_is_live && n > 0 => n,
+            _ => Self::DEFAULT_BUFFER,
         }
     }
 

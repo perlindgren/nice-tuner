@@ -6,6 +6,26 @@ use nice_tuner::settings::{self, Settings};
 use std::sync::atomic::Ordering;
 
 fn main() {
+    // Helper mode for the settings panel (see devices::snapshot_via_child):
+    // enumerate one backend, print JSON on stdout, exit — WITHOUT opening
+    // a window or a stream. The whole point is a process that holds no
+    // ASIO driver, so it can see drivers the live app cannot.
+    {
+        let argv: Vec<String> = std::env::args().collect();
+        if argv.get(1).map(String::as_str) == Some("--list-devices") {
+            let backend = argv
+                .get(2)
+                .filter(|s| !s.is_empty())
+                .cloned()
+                .unwrap_or_else(|| "auto".to_owned());
+            let inp = argv.get(3).filter(|s| !s.is_empty()).map(String::as_str);
+            let outp = argv.get(4).filter(|s| !s.is_empty()).map(String::as_str);
+            let snap = nice_tuner::devices::snapshot(&backend, inp, outp);
+            print!("{}", serde_json::to_string(&snap).unwrap_or_default());
+            return;
+        }
+    }
+
     nice_tuner::STANDALONE_MODE.store(true, Ordering::Relaxed);
 
     let raw: Vec<String> = std::env::args().collect();

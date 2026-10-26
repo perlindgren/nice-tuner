@@ -288,3 +288,62 @@ pub fn stream_options(
     };
     (rates, buffers)
 }
+
+/// Everything the settings page can learn about a backend in one pass.
+/// Built in-process — or, when that is provably blind (ASIO, below), in
+/// a throwaway child process and shipped back as JSON.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Snapshot {
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+    pub def_in: Option<String>,
+    pub def_out: Option<String>,
+    pub rates: Vec<f32>,
+    pub buffers: Vec<u32>,
+    pub driver_rate: Option<f32>,
+}
+
+/// In-process snapshot: every enumeration call, once.
+pub fn snapshot(backend: &str, input: Option<&str>, output: Option<&str>) -> Snapshot {
+    let (def_in, def_out) = default_device_names(backend);
+    let (rates, buffers) = stream_options(backend, input, output);
+    Snapshot {
+        inputs: list_input_devices(backend),
+        outputs: list_output_devices(backend),
+        def_in,
+        def_out,
+        rates,
+        buffers,
+        driver_rate: driver_default_rate(backend, input, output),
+    }
+}
+
+/// ASIO enumeration from THIS process is blind while a stream is open:
+/// asio-sys keeps ONE driver loaded globally (the running stream's) and
+/// refuses every other (`DriverAlreadyExists`), and destroying drivers
+/// mid-enumeration would tear at the live one. The panel cannot close
+/// the device — nice-plug owns the stream — and the user must not have
+/// to restart. So: ask a CHILD process, which opens no stream at all
+/// and therefore sees every registered driver. The parent's audio
+/// never stops; nothing is closed; the child enumerates and dies.
+pub fn snapshot_via_child(
+    backend: &str,
+    input: Option<&str>,
+    output: Option<&str>,
+) -> Option<Snapshot> {
+    let mut cmd = std::process::Command::new(std::env::current_exe().ok()?);
+    cmd.arg("--list-devices")
+        .arg(backend)
+        .arg(input.unwrap_or(""))
+        .arg(output.unwrap_or(""));
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&out.stdout).ok()
+}
