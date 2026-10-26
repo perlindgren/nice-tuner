@@ -870,6 +870,37 @@ impl TunerUi {
             let ih = 13.0 * fit;
             let step = ih * 2.0 + 5.0 * fit;
             let skip = self.list_scroll as usize;
+            let shown = items.len().saturating_sub(skip).min(VISIBLE_ITEMS);
+            let slot_y =
+                |i: usize| row_y(row) - (i as f32 - self.list_scroll) * step - ih - 8.0 * fit;
+
+            // Backing panel: opaque, padded past the item stack on every
+            // side, with a one-unit lighter rim. The list must read as its
+            // own surface lifted off the page — not rows floating across the
+            // tuner chrome. Drawn under the items (z), over everything else.
+            if shown > 0 {
+                let pad = 9.0 * fit;
+                let top = slot_y(skip) + ih;
+                let bottom = slot_y(skip + shown - 1) - ih;
+                let py = (top + bottom) * 0.5;
+                let ph = (top - bottom) * 0.5 + pad;
+                let pw = bhw + pad;
+                ctx.rectangle(bx, py, pw + 1.5 * fit, ph + 1.5 * fit, HOVER, 0.44);
+                ctx.rectangle(
+                    bx,
+                    py,
+                    pw,
+                    ph,
+                    Color {
+                        a: 1.0,
+                        r: BG.r,
+                        g: BG.g,
+                        b: BG.b + 0.02,
+                    },
+                    0.445,
+                );
+            }
+
             for (idx, label) in items
                 .iter()
                 .enumerate()
@@ -877,7 +908,7 @@ impl TunerUi {
                 .take(VISIBLE_ITEMS)
                 .collect::<Vec<_>>()
             {
-                let iy = row_y(row) - (idx as f32 - self.list_scroll) * step - ih - 8.0 * fit;
+                let iy = slot_y(idx);
                 let sel = self.selected_index(dd) == idx;
                 let hov = point_in(mouse, bx, iy, bhw, ih);
                 ctx.rectangle(
