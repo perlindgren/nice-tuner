@@ -1777,10 +1777,12 @@ dependencies = [
  "nice-plug",
  "pitch",
  "pollster",
+ "raw-window-handle",
  "rtrb",
  "serde",
  "serde_json",
  "wgpu",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

@@ -19,6 +19,16 @@ cargo check
 echo "== standalone check =="
 cargo check --features standalone
 
+echo "== windows target typecheck (cfg(windows) code the macOS gate never compiles) =="
+# `standalone` WITHOUT asio here: ASIO's C++ build script cannot
+# cross-compile from macOS. This still type-and-name-checks all the
+# Win32 window-placement code, which no macOS pass ever sees.
+if rustup target list --installed 2>/dev/null | grep -q x86_64-pc-windows-msvc; then
+  cargo clippy -p nice-tuner --features standalone --target x86_64-pc-windows-msvc -- -D warnings
+else
+  echo "skipped: rustup target add x86_64-pc-windows-msvc"
+fi
+
 echo "== tests: workspace (all members + doctests) =="
 cargo test --workspace
 

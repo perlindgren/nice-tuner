@@ -94,11 +94,19 @@ only in builds with `--features standalone-asio`; enumeration loads each
 registered ASIO driver, so the first open can pause a moment where several are
 installed).
 
-- **Persistence**: `APPLY & RESTART` writes `nice-tuner-settings.json` to the
-  **current directory**; it is read again at every startup.
-- **Applied directly** = save + automatic process respawn (~a blink). It is a
-  respawn because nice-plug's standalone wrapper owns the audio stream — a
-  plugin cannot reconfigure it from inside (same ownership story as
+- **Persistence**: `APPLY` writes `nice-tuner-settings.json` to the **current
+  directory**; it is read again at every startup. The button reads
+  `APPLY & RESTART` only when a change actually needs new audio streams
+  (backend, devices, rate, buffer) — everything else goes live on save.
+  `RESET` (centre button) restores every default, including window geometry.
+- **Window geometry**: the last window position and size are remembered too —
+  written ~2 s after the window settles and on Apply, restored at launch; with
+  no settings file the window opens centred. Position is Windows-only (the
+  window toolkit exposes no position API elsewhere; size still round-trips).
+- **Applied directly** = save, plus an automatic process respawn (~a blink)
+  when audio settings changed. The respawn is how nice-plug's standalone
+  wrapper reopens the audio stream — a plugin cannot reconfigure it from
+  inside (same ownership story as
   [RustAudio/nice-plug#93](https://codeberg.org/RustAudio/nice-plug/issues/93)
   below).
 - **Precedence**: command-line flags > settings file > defaults (including our

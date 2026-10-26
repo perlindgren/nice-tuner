@@ -50,6 +50,22 @@ pub struct Settings {
     /// a host — unlike the audio settings, nothing RT consults them.
     pub in_tune_cents: Option<f32>,
     pub gauge_knee_cents: Option<f32>,
+    /// Standalone window geometry (top-left in physical screen px; size
+    /// in logical units). None = never saved → the window centers itself
+    /// on first launch. Hosts own their windows; this is standalone-only.
+    pub window: Option<WindowGeom>,
+}
+
+/// Serialized window placement for the standalone binary. `x`/`y` are
+/// physical screen px (top-left) and known only on Windows — elsewhere
+/// baseview has no position concept at all; size is logical px. Both
+/// always round-trip: unknown position simply means "center again".
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WindowGeom {
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub width: f32,
+    pub height: f32,
 }
 
 impl Settings {
@@ -170,6 +186,38 @@ pub fn effective_args(settings: &Settings, raw: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_geometry_round_trips_and_defaults_absent() {
+        let s = Settings {
+            window: Some(WindowGeom {
+                x: Some(-1200),
+                y: Some(80),
+                width: 900.0,
+                height: 560.0,
+            }),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, s);
+        // Old files (no window key) load as "never saved" → the window
+        // centres itself on the next start.
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.window, None);
+        // Size-only entries (platforms without a position API omit x/y).
+        let size_only: Settings =
+            serde_json::from_str(r#"{"window":{"width":800.0,"height":500.0}}"#).unwrap();
+        assert_eq!(
+            size_only.window,
+            Some(WindowGeom {
+                x: None,
+                y: None,
+                width: 800.0,
+                height: 500.0
+            })
+        );
+    }
 
     #[test]
     fn command_line_beats_settings_file() {

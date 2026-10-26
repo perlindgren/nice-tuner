@@ -50,6 +50,12 @@ pub struct TunerSharedState {
     /// meter and the analyzed mono feed (set live by the panel, seeded from
     /// the settings file in standalone; stays 0 = auto inside a host).
     pub input_channel: AtomicCell<u32>,
+    /// Standalone top-level window position, physical px (top-left),
+    /// polled by the gui on Windows; read when geometry is persisted.
+    pub window_pos: std::sync::Mutex<Option<(i32, i32)>>,
+    /// Position to apply once at window creation: restored from the
+    /// settings file, or computed screen-center on first launch.
+    pub pending_geom: std::sync::Mutex<Option<(i32, i32)>>,
     /// Wall-clock ms (UNIX epoch) of the last confident detection; the UI
     /// treats the signal as absent when this goes stale (the detector only
     /// reports confident windows).
@@ -87,6 +93,8 @@ impl TunerSharedState {
             input_rms: AtomicCell::new(0.0),
             input_peak: AtomicCell::new(0.0),
             input_channel: AtomicCell::new(0),
+            window_pos: std::sync::Mutex::new(None),
+            pending_geom: std::sync::Mutex::new(None),
             last_detection_ms: AtomicU64::new(0),
             a4_ref_bits: AtomicU64::new(440.0f64.to_bits()),
             gate_db: AtomicCell::new(-60.0),
@@ -110,6 +118,10 @@ impl TunerSharedState {
 
     pub fn logical_size(&self) -> LogicalSize<f32> {
         self.logical_size.load()
+    }
+
+    pub fn set_logical_size(&self, size: LogicalSize<f32>) {
+        self.logical_size.store(size);
     }
 
     pub fn scale_factor(&self) -> f64 {
@@ -221,6 +233,23 @@ impl Editor for TunerEditor {
     ) -> Result<SpawnedEditor<Self::Handle>, Box<dyn Error>> {
         let params = Arc::clone(&self.params);
         let shared = Arc::clone(&self.shared);
+
+        // Standalone top-level only: restore the saved window geometry.
+        // Size rides in through logical_size (baseview's with_size); the
+        // position queues in pending_geom for the window handler to apply
+        // once via the platform API (baseview has no position concept).
+        // A plugin inside a host never touches any of this — the host
+        // owns window placement.
+        if STANDALONE_MODE.load(Ordering::Relaxed) && parent.is_none() {
+            let (s, _) = settings::Settings::load();
+            if let Some(g) = s.window {
+                shared.set_logical_size(LogicalSize::new(
+                    g.width.max(MIN_SIZE.width),
+                    g.height.max(MIN_SIZE.height),
+                ));
+                *shared.pending_geom.lock().unwrap() = g.x.zip(g.y);
+            }
+        }
 
         let redraw_requested = Arc::new(AtomicBool::new(true));
         let redraw_requested_2 = Arc::clone(&redraw_requested);

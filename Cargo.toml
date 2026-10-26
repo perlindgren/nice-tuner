@@ -23,7 +23,7 @@ required-features = ["standalone"]
 default = []
 # Builds the standalone app binary (src/main.rs). Kept out of the default set
 # so the plugin (cdylib) builds do not pull in cpal/jack/midir.
-standalone = ["nice-plug/standalone", "dep:cpal"]
+standalone = ["nice-plug/standalone", "dep:cpal", "dep:windows-sys", "dep:raw-window-handle"]
 # Windows only (a no-op elsewhere; nice-plug gates all ASIO code on
 # target_os = "windows"). Compiles cpal's ASIO host into the standalone
 # binary and adds the `--backend asio` option. Without it, `--backend asio`
@@ -63,6 +63,20 @@ pitch = { path = "crates/pitch" }
 rtrb = "0.4"
 # M3: frost fork (embedded renderer, winit run loop + rodio removed)
 frost = { path = "vendor/frost" }
+
+# Standalone top-level window geometry (position restore/centering):
+# baseview 0.3.3 has no position API, so the Windows build reaches for
+# SetWindowPos/GetWindowRect directly. Compiles only on Windows, only for
+# the standalone build (the target table drops it elsewhere).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# baseview 0.3.3 speaks raw-window-handle 0.6; same version required to
+# read its PlatformHandle's HWND.
+raw-window-handle = { version = "0.6", optional = true }
 
 [workspace]
 members = ["xtask", "crates/pitch", "vendor/frost"]

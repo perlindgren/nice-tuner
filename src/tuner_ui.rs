@@ -1203,6 +1203,22 @@ impl TunerUi {
                     };
                 }
                 if apply {
+                    // Carry the window's current geometry along: "last
+                    // screen position and size" is a setting like any
+                    // other, saved when the user says Apply. On Windows
+                    // the live rect feeds it (see gui.rs); elsewhere
+                    // only the size is knowable, position is preserved.
+                    #[cfg(feature = "standalone")]
+                    {
+                        let ls = self.shared.logical_size();
+                        let pos = *self.shared.window_pos.lock().unwrap();
+                        self.settings.window = Some(crate::settings::WindowGeom {
+                            x: pos.map(|p| p.0).or(self.settings.window.and_then(|g| g.x)),
+                            y: pos.map(|p| p.1).or(self.settings.window.and_then(|g| g.y)),
+                            width: ls.width,
+                            height: ls.height,
+                        });
+                    }
                     match self.settings.save() {
                         // Only an audio-class change restarts; a pure
                         // param save is already live — say so.
