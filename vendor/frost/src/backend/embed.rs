@@ -16,9 +16,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use wgpu::{
-    Backends, Device, Instance, Queue, RequestAdapterOptions, Surface, TextureFormat,
-};
+use wgpu::{Adapter, Device, Queue, Surface, TextureFormat};
 
 use crate::backend::app::Frost;
 use crate::objects::{Scene, SpriteFilter};
@@ -89,6 +87,20 @@ pub enum FrameError {
     SizeInvalid,
 }
 
+/// The device limits a host should request so every frost pipeline fits.
+///
+/// frost's shape pipeline binds storage buffers visible to the fragment
+/// stage; downlevel/WebGL2 limit profiles zero those out, and wgpu then
+/// aborts with a validation panic the first time the engine builds a
+/// bind group layout — inside *someone else's* host process. This is the
+/// single source of truth: request the device with exactly
+/// `frost::embedded::device_limits(&adapter)` (uplevel defaults — what
+/// frost asks for its own device — with resolution limits clamped to the
+/// adapter so the request itself cannot fail on sizes).
+pub fn device_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    wgpu::Limits::defaults().using_resolution(adapter.limits())
+}
+
 /// The embeddable engine: the scene graph, the frame pipeline, and the
 /// input state, driven one call per frame by the host.
 ///
@@ -135,13 +147,19 @@ impl<P: Process> Embedded<P> {
     /// [`crate::Context::set_vsync`] flag still exists for apps that read it,
     /// but it moves no swap chain here.
     ///
-    /// The engine asks a private [`Instance`] for an adapter at startup
-    /// — a capability *query* only (surface formats, texture features):
-    /// nothing is created from it, and the device that does the work is
-    /// always the host's.
+    /// The host moves in the very [`Adapter`] it requested its device
+    /// from — a capability *query* partner only (surface formats, texture
+    /// features): nothing is ever created from it, and the device that
+    /// does the work is the host's. It must come from the same
+    /// [`Instance`] as the device and the surface: wgpu ids are scoped to
+    /// their instance's registry, and an adapter from anywhere else is a
+    /// dangling number by the first capability question (this replaced a
+    /// private-instance adapter, which panicked exactly that way under
+    /// wgpu 30's per-instance globals).
     pub fn new(
         device: Device,
         queue: Queue,
+        adapter: Adapter,
         surface: Surface<'static>,
         surface_format: TextureFormat,
         physical: (u32, u32),
@@ -150,6 +168,19 @@ impl<P: Process> Embedded<P> {
         process: P,
         config: EmbeddedConfig,
     ) -> Self {
+        // Fail fast, at construction, with an actionable message — rather
+        // than later inside `Device::create_bind_group_layout` ("limit is 0,
+        // count was 2"), which is where a host that requested downlevel /
+        // WebGL2 limits would otherwise trip over the shape pipeline.
+        let limits = device.limits();
+        assert!(
+            limits.max_storage_buffers_per_shader_stage >= 2,
+            "frost's shape pipeline binds 2 storage buffers visible to the \
+             fragment stage, but the host device was requested with \
+             max_storage_buffers_per_shader_stage = {}. Request the device \
+             with frost::embedded::device_limits(&adapter).",
+            limits.max_storage_buffers_per_shader_stage
+        );
         let device_lost = Arc::new(AtomicBool::new(false));
         {
             let flag = Arc::clone(&device_lost);
@@ -158,11 +189,6 @@ impl<P: Process> Embedded<P> {
                 flag.store(true, Ordering::Relaxed);
             });
         }
-        let adapter = {
-            let instance = Instance::default();
-            block_on_adapter(&instance)
-                .expect("no GPU adapter: the host has a live device, so this should not happen")
-        };
         let mut frost = Frost::new(
             adapter,
             device.clone(),
@@ -374,21 +400,5 @@ impl<P: Process> Embedded<P> {
     /// free to be raised again by a stubborn process.
     pub fn clear_exit(&mut self) {
         self.frost.clear_exit();
-    }
-}
-
-/// The capability-query adapter, from a private instance: requested
-/// with the defaults wgpu itself would use, and falling back to the
-/// first enumerated adapter if the request itself declines. Never used
-/// to create anything.
-fn block_on_adapter(instance: &Instance) -> Option<wgpu::Adapter> {
-    match crate::backend::block_on(instance.request_adapter(&RequestAdapterOptions::default())) {
-        Ok(adapter) => Some(adapter),
-        // A no-surface request can decline on a machine that would
-        // happily make an adapter for a window; the enumeration answers
-        // the same question without the option.
-        Err(_) => crate::backend::block_on(instance.enumerate_adapters(Backends::all()))
-            .into_iter()
-            .next(),
     }
 }

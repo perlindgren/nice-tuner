@@ -23,6 +23,7 @@
 //! # fn example(
 //! #     device: wgpu::Device,
 //! #     queue: wgpu::Queue,
+//! #     adapter: wgpu::Adapter,
 //! #     surface: wgpu::Surface<'static>,
 //! # ) {
 //! let scene = frost::Scene::new(frost::SceneNode {
@@ -34,6 +35,7 @@
 //! let mut app = frost::embedded::Embedded::new(
 //!     device,
 //!     queue,
+//!     adapter,
 //!     surface,
 //!     wgpu::TextureFormat::Bgra8UnormSrgb,
 //!     (800, 600),

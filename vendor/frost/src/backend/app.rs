@@ -1,12 +1,10 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use std::future::Future;
 use std::num::NonZeroU64;
 use std::sync::Arc;
 // `block_on`'s machinery: the embedded engine asks an instance for an
 // adapter once, at startup, and nothing else here ever awaits.
-use std::task::{Context as TaskContext, Poll, Waker};
 
 use wgpu::{
     Adapter, AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
@@ -3068,22 +3066,6 @@ impl<P: Process> Frost<P> {
     fn surface_back(&mut self) {
         if let Some((why, frames)) = self.surface_gone.take() {
             log::info!("surface back after {frames} skipped frames ({why})");
-        }
-    }
-}
-
-/// Drives `future` on this thread until it completes.
-///
-/// The one await in the engine: the embedded startup asks an instance
-/// for an adapter (see [`crate::embedded::Embedded::new`]), a future that
-/// resolves on the spot on every native backend — nothing here ever
-/// awaits a frame, a present, or a device.
-pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
-    let mut cx = TaskContext::from_waker(Waker::noop());
-    let mut future = std::pin::pin!(future);
-    loop {
-        if let Poll::Ready(value) = future.as_mut().poll(&mut cx) {
-            return value;
         }
     }
 }

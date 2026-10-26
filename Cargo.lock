@@ -958,6 +958,7 @@ version = "0.1.0"
 dependencies = [
  "image",
  "log",
+ "pollster",
  "swash",
  "wgpu",
  "winit",

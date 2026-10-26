@@ -23,3 +23,7 @@ wgpu = "30.0.1"
 # `PhysicalSize`, `Fullscreen`, …), so host code and frost speak one
 # vocabulary for keys and buttons.
 winit = "0.30.13"
+
+[dev-dependencies]
+# tests drive wgpu futures without pulling an async runtime
+pollster = "0.4"

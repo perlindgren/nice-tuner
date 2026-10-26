@@ -39,6 +39,12 @@ pub struct TunerWindow {
 }
 
 struct TunerEngine {
+    /// The instance that the surface, adapter, and device were all made
+    /// from. wgpu 30 scopes resource ids to their instance's registry, so
+    /// a surface-lost repair MUST re-create the surface on this very
+    /// instance — a fresh one would make every stored id cross registries
+    /// (regression: "Cannot get non-existent resource AdapterId").
+    instance: wgpu::Instance,
     /// Owns the `wgpu::Surface` internally; resize handled by `Embedded`.
     /// A *lost* surface is detected via `Embedded::surface_lost()` and
     /// repaired with `replace_surface(fresh, format)`.
@@ -85,8 +91,7 @@ impl TunerWindow {
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("nice-tuner"),
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                        .using_resolution(adapter.limits()),
+                    required_limits: frost::embedded::device_limits(&adapter),
                     memory_hints: wgpu::MemoryHints::MemoryUsage,
                     ..Default::default()
                 })
@@ -111,9 +116,12 @@ impl TunerWindow {
         let ui = crate::tuner_ui::TunerUi::new(Arc::clone(&self.shared), font());
         let scene = crate::tuner_ui::static_scene();
 
+        // The adapter moves in: frost keeps it for capability queries, and
+        // it must be the very adapter this device (and surface) came from.
         let embedded = Embedded::new(
             device.clone(),
             queue.clone(),
+            adapter,
             surface,
             format,
             (size.physical.width, size.physical.height),
@@ -123,7 +131,11 @@ impl TunerWindow {
             EmbeddedConfig::default(),
         );
 
-        *self.engine.borrow_mut() = Some(TunerEngine { embedded, format });
+        *self.engine.borrow_mut() = Some(TunerEngine {
+            instance,
+            embedded,
+            format,
+        });
         Ok(())
     }
 }
@@ -136,21 +148,25 @@ impl WindowHandler for TunerWindow {
                 // SizeInvalid = zero-sized panel mid-collapse: nothing to
                 // draw, `resize` resumes. Never surface it to baseview — a
                 // HandlerError would tear the window down.
-                Ok(()) | Err(FrameError::SizeInvalid) => {
-                    // frame() may return Ok while having drawn nothing: the
-                    // honest loss signal is surface_lost(). Repair in place
-                    // with a fresh surface over the still-live window.
+                // frame() may return Ok while having drawn nothing: the
+                // honest loss signal is surface_lost(). Repair in place with
+                // a fresh surface — on the SAME instance as device/adapter
+                // (see TunerEngine::instance).
+                Ok(()) => {
                     if engine.embedded.surface_lost() {
-                        let instance = wgpu::Instance::new(
-                            wgpu::InstanceDescriptor::new_without_display_handle(),
-                        );
-                        let fresh = instance
+                        let fresh = engine
+                            .instance
                             .create_surface(self.window.platform_handle())
                             .map_err(|e| HandlerError::from_boxed(e.to_string().into()))?;
                         engine.embedded.replace_surface(fresh, engine.format);
                     }
                     Ok(())
                 }
+                // Zero-size panel mid-collapse: nothing was ever presented,
+                // so there is nothing "lost"; `resize` resumes. Never
+                // surface it to baseview — a HandlerError tears the window
+                // down.
+                Err(FrameError::SizeInvalid) => Ok(()),
                 // The device is gone: rebuild device+surface+scene wholesale;
                 // the baseview window itself is still alive.
                 Err(FrameError::DeviceLost) | Err(_) => {
