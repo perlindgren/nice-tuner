@@ -1080,7 +1080,9 @@ impl TunerUi {
     /// RESET, and the star matches the dropdown's starred row.
     fn current_value_label(&self, dd: Dropdown) -> String {
         let mut s = self.value_text(dd);
-        if self.is_default(dd) && !s.ends_with('*') {
+        // A bare dash needs no star — the star decorates values, not
+        // the absence of one.
+        if self.is_default(dd) && !s.ends_with('*') && s != "\u{2014}" {
             s.push('*');
         }
         s
@@ -1088,12 +1090,17 @@ impl TunerUi {
 
     fn value_text(&self, dd: Dropdown) -> String {
         match dd {
-            Dropdown::Backend => self
-                .backend_opts
-                .iter()
-                .find(|(id, _)| id == self.backend_key())
-                .map(|(_, l)| l.clone())
-                .unwrap_or_else(|| self.backend_key().to_owned()),
+            Dropdown::Backend => match self.settings.backend.as_deref() {
+                // Nothing chosen yet: a bare dash — "auto" is what the
+                // NEXT launch does, not a choice the user made.
+                None => "\u{2014}".to_string(),
+                Some(id) => self
+                    .backend_opts
+                    .iter()
+                    .find(|(i, _)| i == id)
+                    .map(|(_, l)| l.clone())
+                    .unwrap_or_else(|| id.to_owned()),
+            },
             Dropdown::Rate => self
                 .settings
                 .sample_rate
