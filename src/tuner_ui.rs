@@ -433,10 +433,12 @@ impl Process for TunerUi {
             ctx.rectangle(0.0, y, half, 2.5 * fit, Color { a: 0.5, ..TRACK }, 0.05);
             for i in 0..=8u32 {
                 let xv = half - i as f32 * (half / 4.0);
-                ctx.rectangle(xv, y, 1.0 * fit, 7.0 * fit, Color { a: 0.6, ..DIM }, 0.06);
+                // Short ticks (±4) and numerals well below them: at ±7/−16
+                // the digit tops crowded the tick and read as clipped.
+                ctx.rectangle(xv, y, 1.0 * fit, 4.0 * fit, Color { a: 0.6, ..DIM }, 0.06);
                 ctx.text(
                     xv,
-                    y - 16.0 * fit,
+                    y - 26.0 * fit,
                     font,
                     format!("{}", -(6 * i as i32)),
                     14.0 * fit,
