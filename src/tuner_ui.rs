@@ -24,7 +24,11 @@ use std::sync::{Arc, atomic::Ordering};
 /// cents → px on the gauge (±50 ¢ spans ±120 px)
 const CENTS_PX: f32 = 2.4;
 /// |cents| inside which we call it in tune, when latched
-const IN_TUNE_CENTS: f64 = 3.0;
+/// Half-width of the in-tune band, in cents — drives both the green zone
+/// painted behind the needle and the color lock (within the band and
+/// stable → green). Comfortable strumming-tuner width; the measurement
+/// itself stays far more precise than this display band.
+const IN_TUNE_CENTS: f64 = 10.0;
 /// ms of continuous same-note stability before latching
 const LATCH_MS: f32 = 400.0;
 
