@@ -13,18 +13,41 @@ fn main() {
     if let Some(warning) = warning {
         eprintln!("nice-tuner: {warning}");
     }
-    // Precedence: explicit command-line flags, then the settings file,
-    // then our defaults (nice-plug's 150 ms input-latency included).
-    let args = settings::effective_args(&settings, &raw);
 
-    nice_export_standalone_with_args::<TunerPlugin, _>(args);
+    // Open-attempt loop: ASIO is exclusive per driver, so "device refuses
+    // to open" is usually transient — the previous instance (Apply &
+    // restart) is still releasing it, or a host like Reaper owns it right
+    // now. A run that dies within its first seconds is a failed startup,
+    // so retry briefly; a run that lasted is a normal window close.
+    const ATTEMPTS: u32 = 4;
+    for attempt in 1..=ATTEMPTS {
+        let args = settings::effective_args(&settings, &raw);
+        let started = std::time::Instant::now();
+        nice_export_standalone_with_args::<TunerPlugin, _>(args);
 
-    // The settings page's "Apply & restart" unwinds the editor through a
-    // deliberate window close; honor it with a fresh process — new settings
-    // are read from the file at its startup, which is the point.
-    if nice_tuner::restart_requested() {
-        respawn(&raw);
+        // The settings page's "Apply & restart" unwinds the editor through
+        // a deliberate window close; honor it with a fresh process — new
+        // settings are read from the file at its startup, which is the point.
+        if nice_tuner::restart_requested() {
+            respawn(&raw);
+        }
+        if started.elapsed() >= std::time::Duration::from_secs(3) {
+            return; // user closed a working window
+        }
+        if attempt < ATTEMPTS {
+            eprintln!(
+                "nice-tuner: audio device would not open (attempt {attempt}/{ATTEMPTS}); \
+                 it may still be releasing from a restart or held by another app (Reaper?). \
+                 Retrying in 700 ms — Ctrl+C to stop."
+            );
+            std::thread::sleep(std::time::Duration::from_millis(700));
+        }
     }
+    eprintln!(
+        "nice-tuner: could not open the audio device after {ATTEMPTS} attempts. \
+         Close any app using it (Reaper's audio system, another tuner window) \
+         and start again."
+    );
 }
 
 fn respawn(raw: &[String]) -> ! {
