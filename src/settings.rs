@@ -24,8 +24,8 @@ pub const OUR_INPUT_LATENCY_DEFAULT: f32 = 0.005;
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// A nice-plug `BackendType` value: `auto`, `jack`, `alsa`, `coreaudio`,
-    /// `wasapi`, `asio`, `dummy`.
+    /// A nice-plug `BackendType` value (clap spellings): `auto`, `jack`,
+    /// `alsa`, `core-audio`, `wasapi`, `asio`, `dummy`.
     pub backend: Option<String>,
     /// Exact cpal device name — for ASIO, the ASIO *driver* name
     /// ("Komplete Input 1/2"), not a port/endpoint name.
@@ -48,6 +48,16 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// Repair known bad values from older writers. Panel builds before the
+    /// clap-key fix wrote the cpal spelling "coreaudio", which nice-plug's
+    /// argument parser rejects — the app then died at startup argv parsing,
+    /// indistinguishable from "device refuses to open".
+    pub fn normalize(&mut self) {
+        if self.backend.as_deref() == Some("coreaudio") {
+            self.backend = Some("core-audio".to_string());
+        }
+    }
+
     pub fn path() -> PathBuf {
         std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
@@ -61,7 +71,10 @@ impl Settings {
             Err(_) => (Settings::default(), None),
             Ok(text) if text.trim().is_empty() => (Settings::default(), None),
             Ok(text) => match serde_json::from_str::<Settings>(&text) {
-                Ok(s) => (s, None),
+                Ok(mut s) => {
+                    s.normalize();
+                    (s, None)
+                }
                 Err(e) => (
                     Settings::default(),
                     Some(format!(
@@ -194,6 +207,8 @@ mod tests {
             backend: Some("asio".into()),
             input_device: Some("Komplete Input 1/2".into()),
             period_size: Some(64),
+            input_channel: Some(1),
+            a4_ref: Some(432.0),
             ..Default::default()
         };
         let text = serde_json::to_string(&s).unwrap();
@@ -204,5 +219,22 @@ mod tests {
             serde_json::from_str(r#"{"backend":"wasapi","future_thing":42}"#).unwrap();
         assert_eq!(loose.backend.as_deref(), Some("wasapi"));
         assert_eq!(loose.period_size, None);
+    }
+
+    #[test]
+    fn normalize_repairs_legacy_coreaudio_key() {
+        let mut s = Settings {
+            backend: Some("coreaudio".into()),
+            ..Default::default()
+        };
+        s.normalize();
+        assert_eq!(s.backend.as_deref(), Some("core-audio"));
+        // Correct values pass through untouched.
+        let mut ok = Settings {
+            backend: Some("wasapi".into()),
+            ..Default::default()
+        };
+        ok.normalize();
+        assert_eq!(ok.backend.as_deref(), Some("wasapi"));
     }
 }

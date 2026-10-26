@@ -29,6 +29,12 @@ fn main() {
 
 fn respawn(raw: &[String]) -> ! {
     let exe = std::env::current_exe().expect("locate own executable for restart");
+    // The dying parent may still hold the audio driver: ASIO drivers are
+    // per-process exclusive DLLs whose teardown completes asynchronously
+    // after the stream drop. Spawning immediately races the new process
+    // against the release — the classic "device refuses to open" on Apply
+    // & restart. A short pause makes the child the sole claimant.
+    std::thread::sleep(std::time::Duration::from_millis(500));
     match std::process::Command::new(exe)
         .args(raw.iter().skip(1))
         .spawn()

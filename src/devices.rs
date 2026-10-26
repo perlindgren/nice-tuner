@@ -35,7 +35,11 @@ fn host_id_value(id: cpal::HostId) -> Option<(&'static str, &'static str)> {
     }
     #[cfg(target_os = "macos")]
     if id == cpal::HostId::CoreAudio {
-        return Some(("coreaudio", "macOS CoreAudio"));
+        // Key must match nice-plug's clap ValueEnum spelling (`core-audio`,
+        // kebab-case) — a cpal-style `coreaudio` here poisons the settings
+        // file and the next startup dies at argv parsing, never reaching the
+        // device. Reads tolerate both spellings (see settings migration).
+        return Some(("core-audio", "macOS Core Audio"));
     }
     #[cfg(target_os = "linux")]
     if id == cpal::HostId::Alsa {
@@ -55,7 +59,7 @@ fn host_id_from_value(value: &str) -> Option<cpal::HostId> {
         return Some(cpal::HostId::Wasapi);
     }
     #[cfg(target_os = "macos")]
-    if value == "coreaudio" {
+    if value == "coreaudio" || value == "core-audio" {
         return Some(cpal::HostId::CoreAudio);
     }
     #[cfg(target_os = "linux")]
