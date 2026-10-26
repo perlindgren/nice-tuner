@@ -27,23 +27,25 @@ use std::sync::{Arc, atomic::Ordering};
 const CENTS_PX: f32 = 4.8;
 /// Half-width of the gauge, in fit units (50 ¢ × CENTS_PX).
 const GAUGE_HALF: f32 = 50.0 * CENTS_PX;
-/// Curvature knee of the gauge scale, in cents.
+/// Default curvature knee of the gauge scale, in cents (the panel can
+/// change it live: `Settings::gauge_knee_cents`).
 const GAUGE_KNEE_CENTS: f32 = 5.0;
-/// Gauge mapping: sign-preserving asinh with a ±5 ¢ knee — near-linear
-/// and readable inside a few cents, progressively compressing beyond it.
-/// The middle gets ~3.2× the room (the ±3 ¢ verdict spans ~91 of 480
-/// units, was 29 linear), edges still reach ±50 ¢. asinh over a power
-/// curve: finite slope at 0, so needle jitter near perfect pitch stays
-/// calm even at this steepness (16 units/¢ at center, not infinite).
-fn cents_to_units(cents: f32) -> f32 {
-    let c = cents.clamp(-50.0, 50.0) / GAUGE_KNEE_CENTS;
-    GAUGE_HALF * c.asinh() / (50.0 / GAUGE_KNEE_CENTS).asinh()
+/// Gauge mapping: sign-preserving asinh with a knee (default ±5 ¢, panel
+/// param) — near-linear and readable inside a few cents, progressively
+/// compressing beyond it. At the default knee the ±3 ¢ verdict spans
+/// ~91 of 480 units, 3.2× the linear size; edges still reach ±50 ¢.
+/// asinh over a power curve: finite slope at 0, so needle jitter near
+/// perfect pitch stays calm even at steep settings.
+fn cents_to_units(cents: f32, knee: f32) -> f32 {
+    let k = knee.max(1.0);
+    let c = cents.clamp(-50.0, 50.0) / k;
+    GAUGE_HALF * c.asinh() / (50.0 / k).asinh()
 }
-/// |cents| inside which we call it in tune, when latched
-/// Half-width of the in-tune band, in cents — drives both the green zone
-/// behind the needle and the color lock. Strict on purpose; the band's
-/// *pixel* width comes from [`cents_to_units`], so widening the draw never widens
-/// the verdict.
+/// Default half-width of the in-tune band and verdict, in cents (the
+/// panel can change it live: `Settings::in_tune_cents`). Drives both the
+/// green zone behind the needle and the color lock; the band's *pixel*
+/// width comes from [`cents_to_units`], so scale changes never alter the
+/// verdict's meaning in cents.
 const IN_TUNE_CENTS: f64 = 3.0;
 /// ms of continuous same-note stability before latching
 const LATCH_MS: f32 = 400.0;
@@ -67,26 +69,13 @@ const MENU_BG: Color = rgb(0x0d, 0x0a, 0x16);
 const HOVER: Color = rgb(0x3a, 0x33, 0x4f);
 const FG: Color = rgb(0xe6, 0xe6, 0xea);
 
-/// Static chrome: background and gauge tick marks. Rebuilt never;
-/// everything that moves is drawn immediately in [`TunerUi::process`].
+/// Static chrome: the background only. Gauge ticks are NOT here — they
+/// follow the panel-adjustable curve and are drawn per frame in
+/// [`TunerUi::process`] together with the needle they share a mapping
+/// with, so chrome and reading cannot disagree about the scale.
 pub fn static_scene() -> Scene {
-    let mut ticks = Vec::new();
-    for cents in (-50..=50).step_by(10) {
-        let x = cents_to_units(cents as f32);
-        let long = cents % 50 == 0;
-        let half = if long { 9.0 } else { 4.5 };
-        ticks.push(Box::new(SceneNode {
-            shape: Some(Shape::Rectangle {
-                center: [x, -2.0], // on the needle band (moved from 25)
-                extent: [0.75, half],
-                color: if long { DIM } else { TRACK },
-            }),
-            ..Default::default()
-        }));
-    }
     Scene::new(SceneNode {
         shape: Some(Shape::Background { color: BG }),
-        children: ticks.into_iter().collect(),
         ..Default::default()
     })
 }
@@ -112,6 +101,7 @@ pub struct TunerUi {
     prev_mouse_down: bool,
     settings: Settings,
     settings_loaded: bool,
+    devices_loaded: bool,
     open_dropdown: Option<Dropdown>,
     list_scroll: f32,
     backend_opts: Vec<(String, String)>,
@@ -162,6 +152,7 @@ impl TunerUi {
             prev_mouse_down: false,
             settings: Settings::default(),
             settings_loaded: false,
+            devices_loaded: false,
             open_dropdown: None,
             list_scroll: 0.0,
             backend_opts: Vec::new(),
@@ -256,6 +247,14 @@ impl TunerUi {
 impl Process for TunerUi {
     fn process(&mut self, ctx: &mut Context, dt: f32) {
         let dt = dt.clamp(0.0, 0.25); // tolerate host pauses
+        // First frame: read the settings file. Look-and-judgement values
+        // (verdict window, gauge curve) apply in hosts too — nothing RT
+        // consumes them; audio settings stay standalone-only by design.
+        if !self.settings_loaded {
+            let (settings, _) = Settings::load();
+            self.settings = settings;
+            self.settings_loaded = true;
+        }
         self.analyze();
 
         // ---- read shared state (updated by analyze(), above) --------------
@@ -295,7 +294,10 @@ impl Process for TunerUi {
             self.stable_ms = (self.stable_ms - dt * 500.0).max(0.0);
         }
         let stable = self.stable_ms >= LATCH_MS;
-        let in_tune = signal && stable && self.cents_shown.abs() <= IN_TUNE_CENTS;
+        let in_tune = signal
+            && stable
+            && self.cents_shown.abs()
+                <= self.settings.in_tune_cents.unwrap_or(IN_TUNE_CENTS as f32) as f64;
 
         // ---- color lerp amber→green (≈200 ms) ------------------------------
         let target = if in_tune { 1.0 } else { 0.0 };
@@ -377,14 +379,32 @@ impl Process for TunerUi {
             );
         }
         let font = &self.font;
-        let x = cents_to_units(self.needle_cents) * fit;
+        let knee = self.settings.gauge_knee_cents.unwrap_or(GAUGE_KNEE_CENTS);
+        let in_tune_cents = self.settings.in_tune_cents.unwrap_or(IN_TUNE_CENTS as f32);
+        let x = cents_to_units(self.needle_cents, knee) * fit;
 
-        // in-tune zone behind the needle — same nonlinear mapping, so the
-        // band edges sit exactly where the needle reads ±3 ¢
+        // Gauge ticks: dynamic (they follow the panel-adjustable curve),
+        // sharing the needle's mapping so they can never lie about it.
+        for cents in (-50..=50).step_by(10) {
+            let tx = cents_to_units(cents as f32, knee) * fit;
+            let long = cents % 50 == 0;
+            ctx.rectangle(
+                tx,
+                -2.0 * fit,
+                0.75 * fit,
+                if long { 9.0 } else { 4.5 } * fit,
+                if long { DIM } else { TRACK },
+                0.04,
+            );
+        }
+
+        // in-tune zone behind the needle — panel-adjustable width, same
+        // nonlinear mapping, so its edges sit exactly where the needle
+        // reads ±the configured window
         ctx.rectangle(
             0.0,
             -2.0 * fit,
-            cents_to_units(IN_TUNE_CENTS as f32) * fit,
+            cents_to_units(in_tune_cents, knee) * fit,
             9.0 * fit,
             Color { a: 0.15, ..GREEN },
             0.05,
@@ -581,6 +601,9 @@ enum Dropdown {
     InputCh,
     A4,
     Gate,
+    /// Editor look/judgement params (verdict window, gauge steepness).
+    InTune,
+    GaugeCurve,
 }
 
 /// Sensible tuning-standards list; 440 sits mid-list.
@@ -588,6 +611,10 @@ const A4_OPTIONS: [f32; 9] = [
     432.0, 438.0, 439.0, 440.0, 441.0, 442.0, 443.0, 444.0, 446.0,
 ];
 const GATE_OPTIONS: [f32; 7] = [-80.0, -70.0, -60.0, -50.0, -40.0, -30.0, -20.0];
+/// Verdict / green-band half-width choices, cents (3.0 = the original).
+const IN_TUNE_OPTIONS: [f32; 7] = [1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0];
+/// Gauge curvature knee choices, cents (5.0 = the original steep middle).
+const GAUGE_KNEE_OPTIONS: [f32; 6] = [3.0, 4.0, 5.0, 7.0, 10.0, 20.0];
 
 fn point_in(p: Option<[f32; 2]>, cx: f32, cy: f32, hw: f32, hh: f32) -> bool {
     p.is_some_and(|[x, y]| (x - cx).abs() <= hw && (y - cy).abs() <= hh)
@@ -613,9 +640,11 @@ const VISIBLE_ITEMS: usize = 8;
 
 impl TunerUi {
     fn open_settings_page(&mut self) {
-        if !self.settings_loaded {
-            let (settings, warning) = Settings::load();
-            self.settings = settings;
+        // File contents arrive on the first frame (see process); opening
+        // the page additionally pays for device enumeration, which can
+        // load ASIO drivers and must stay lazy.
+        if !self.devices_loaded {
+            let (_, warning) = Settings::load();
             self.save_note = warning;
             #[cfg(feature = "standalone")]
             {
@@ -625,7 +654,7 @@ impl TunerUi {
                     .collect();
             }
             self.refresh_devices();
-            self.settings_loaded = true;
+            self.devices_loaded = true;
         }
         self.open_dropdown = None;
         self.page = Page::Settings;
@@ -691,6 +720,14 @@ impl TunerUi {
                 .collect(),
             Dropdown::A4 => A4_OPTIONS.iter().map(|v| format!("{v:.0} Hz")).collect(),
             Dropdown::Gate => GATE_OPTIONS.iter().map(|v| format!("{v:.0} dB")).collect(),
+            Dropdown::InTune => IN_TUNE_OPTIONS
+                .iter()
+                .map(|v| format!("{v:.0} \u{a2}"))
+                .collect(),
+            Dropdown::GaugeCurve => GAUGE_KNEE_OPTIONS
+                .iter()
+                .map(|v| format!("{v:.0} \u{a2} knee"))
+                .collect(),
         }
     }
 
@@ -728,6 +765,18 @@ impl TunerUi {
                 .iter()
                 .position(|v| (*v - self.shared.gate_db.load()).abs() < 0.05)
                 .unwrap_or(0),
+            Dropdown::InTune => IN_TUNE_OPTIONS
+                .iter()
+                .position(|v| {
+                    (*v - self.settings.in_tune_cents.unwrap_or(IN_TUNE_CENTS as f32)).abs() < 0.05
+                })
+                .unwrap_or(2),
+            Dropdown::GaugeCurve => GAUGE_KNEE_OPTIONS
+                .iter()
+                .position(|v| {
+                    (*v - self.settings.gauge_knee_cents.unwrap_or(GAUGE_KNEE_CENTS)).abs() < 0.05
+                })
+                .unwrap_or(2),
         }
     }
 
@@ -798,6 +847,18 @@ impl TunerUi {
                     self.settings.gate_db = Some(*v);
                 }
             }
+            // Editor look/judgement: applied the instant they are picked
+            // (draw + verdict re-read settings every frame); APPLY persists.
+            Dropdown::InTune => {
+                if let Some(v) = IN_TUNE_OPTIONS.get(idx) {
+                    self.settings.in_tune_cents = Some(*v);
+                }
+            }
+            Dropdown::GaugeCurve => {
+                if let Some(v) = GAUGE_KNEE_OPTIONS.get(idx) {
+                    self.settings.gauge_knee_cents = Some(*v);
+                }
+            }
         }
         self.open_dropdown = None;
         self.list_scroll = 0.0;
@@ -839,6 +900,14 @@ impl TunerUi {
             },
             Dropdown::A4 => format!("{:.1} Hz", self.shared.a4_ref()),
             Dropdown::Gate => format!("{:.0} dB", self.shared.gate_db.load()),
+            Dropdown::InTune => format!(
+                "{:.0} \u{a2} window",
+                self.settings.in_tune_cents.unwrap_or(IN_TUNE_CENTS as f32)
+            ),
+            Dropdown::GaugeCurve => format!(
+                "{:.0} \u{a2} knee",
+                self.settings.gauge_knee_cents.unwrap_or(GAUGE_KNEE_CENTS)
+            ),
         }
     }
 
@@ -849,7 +918,7 @@ impl TunerUi {
         let font = std::sync::Arc::clone(&self.font);
         let z = 0.4f32;
 
-        const ROWS: [(&str, Dropdown); 8] = [
+        const ROWS: [(&str, Dropdown); 10] = [
             ("Backend", Dropdown::Backend),
             ("Sample rate", Dropdown::Rate),
             ("Buffer (frames)", Dropdown::Buffer),
@@ -858,11 +927,15 @@ impl TunerUi {
             ("Output device", Dropdown::Output),
             ("A4 reference", Dropdown::A4),
             ("Input gate", Dropdown::Gate),
+            ("In-tune window", Dropdown::InTune),
+            ("Gauge curve", Dropdown::GaugeCurve),
         ];
-        // Rows 5+ (A4, gate) are the param block: an extra gap drops them
-        // below the audio block instead of running one uniform ladder.
+        // Rows 6+ are the param block: an extra gap drops them below the
+        // audio block instead of running one uniform ladder. Spacing is
+        // tuned so ten rows clear the APPLY button (bottom row ends at
+        // −155·fit, APPLY's top edge is −175·fit).
         let row_y = |i: usize| {
-            h / 2.0 - 46.0 * fit - i as f32 * 38.0 * fit - if i >= 6 { 26.0 } else { 0.0 } * fit
+            h / 2.0 - 40.0 * fit - i as f32 * 33.0 * fit - if i >= 6 { 14.0 } else { 0.0 } * fit
         };
         let bx = w / 2.0 - 185.0 * fit; // value-button column
         let bhw = 165.0 * fit;
@@ -959,7 +1032,7 @@ impl TunerUi {
                 by + 34.0 * fit,
                 &font,
                 format!(
-                    "saved to {} · audio: Apply restarts · A4/gate/channel: live, saved on Apply",
+                    "saved to {} · audio: Apply restarts · params: live, saved on Apply",
                     crate::settings::FILE_NAME,
                 ),
                 19.8 * fit,
@@ -1070,30 +1143,47 @@ impl TunerUi {
 
 #[cfg(test)]
 mod tests {
-    use super::cents_to_units;
+    use super::{GAUGE_KNEE_OPTIONS, cents_to_units};
 
     #[test]
     fn gauge_scale_endpoints_symmetry_and_midroom() {
-        // Endpoints land exactly on the gauge edges.
-        assert!((cents_to_units(50.0) - 240.0).abs() < 1e-3);
-        assert!((cents_to_units(-50.0) + 240.0).abs() < 1e-3);
-        // Odd and monotone — the gauge never folds.
-        let mut prev = f32::MIN;
-        let mut c = -50.0f32;
-        while c <= 50.0 {
-            let x = cents_to_units(c);
-            assert!(x > prev, "monotone at {c}");
-            assert!((cents_to_units(-c) + x).abs() < 1e-3, "odd at {c}");
-            prev = x;
-            c += 0.5;
+        // Endpoints land exactly on the gauge edges, at EVERY selectable
+        // knee (the panel can pick any of them).
+        for &knee in &GAUGE_KNEE_OPTIONS {
+            assert!((cents_to_units(50.0, knee) - 240.0).abs() < 1e-2);
+            assert!((cents_to_units(-50.0, knee) + 240.0).abs() < 1e-2);
+            // Odd and monotone — the gauge never folds.
+            let mut prev = f32::MIN;
+            let mut c = -50.0f32;
+            while c <= 50.0 {
+                let x = cents_to_units(c, knee);
+                assert!(x > prev, "monotone at {c} knee {knee}");
+                assert!(
+                    (cents_to_units(-c, knee) + x).abs() < 1e-2,
+                    "odd at {c} knee {knee}"
+                );
+                prev = x;
+                c += 0.5;
+            }
+            // The point of it all: the ±3 ¢ verdict zone is ≥ 3× the
+            // linear span (14.4 units) at the DEFAULT knee…
+            if (knee - 5.0).abs() < 0.01 {
+                assert!(
+                    cents_to_units(3.0, knee) >= 44.0,
+                    "mid gains too little room"
+                );
+            }
+            // …and smaller knees never shrink it.
+            if knee <= 5.0 {
+                assert!(cents_to_units(3.0, knee) >= cents_to_units(3.0, 5.0));
+            }
+            // Beyond-range input (EMA overshoot) cannot escape the gauge.
+            assert!(cents_to_units(80.0, knee) <= 240.0 + 1e-2);
         }
-        // The point of it all: the ±3 ¢ verdict zone is ≥ 3× the linear
-        // span (was 14.4 units at 4.8 px/¢; knee-5 asinh gives ~45.5),
-        // and the 10 ¢ mark still sits before the gauge's midpoint.
-        assert!(cents_to_units(3.0) >= 44.0, "mid gains too little room");
-        assert!(cents_to_units(10.0) < 120.0, "edges compress too weakly");
-        // Beyond-range input (EMA overshoot) cannot escape the gauge
-        // (epsilon: the mapping is (HALF·a)/a at the clamped edge).
-        assert!(cents_to_units(80.0) <= 240.0 + 1e-3);
+        // The 10 ¢ mark sits before the gauge's midpoint at the default.
+        assert!(
+            cents_to_units(10.0, 5.0) < 120.0,
+            "edges compress too weakly"
+        );
     }
 }

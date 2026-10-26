@@ -45,6 +45,11 @@ pub struct Settings {
     /// detector: honest mono mix). A noisy sibling channel makes
     /// max-channel wrong — the right input must be picked explicitly.
     pub input_channel: Option<u32>,
+    /// Tuning-verdict half-width and gauge curvature, cents (None = 3.0 /
+    /// 5.0). Look-and-judgement values read by the editor itself, also in
+    /// a host — unlike the audio settings, nothing RT consults them.
+    pub in_tune_cents: Option<f32>,
+    pub gauge_knee_cents: Option<f32>,
 }
 
 impl Settings {
@@ -209,6 +214,8 @@ mod tests {
             period_size: Some(64),
             input_channel: Some(1),
             a4_ref: Some(432.0),
+            in_tune_cents: Some(2.0),
+            gauge_knee_cents: Some(7.0),
             ..Default::default()
         };
         let text = serde_json::to_string(&s).unwrap();
