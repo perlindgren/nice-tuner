@@ -309,7 +309,7 @@ impl Process for TunerUi {
                 gy,
                 &self.font,
                 "SETTINGS",
-                13.2 * fit,
+                19.8 * fit,
                 650.0,
                 if hov { AMBER } else { DIM },
                 0.41,
@@ -327,7 +327,7 @@ impl Process for TunerUi {
                 h / 2.0 - 16.0 * fit,
                 &self.font,
                 "audio: host-managed",
-                12.0 * fit,
+                18.0 * fit,
                 550.0,
                 DIM,
                 0.4,
@@ -339,7 +339,7 @@ impl Process for TunerUi {
         // in-tune zone behind the needle
         ctx.rectangle(
             0.0,
-            25.0 * fit,
+            -2.0 * fit,
             IN_TUNE_CENTS as f32 * CENTS_PX * fit,
             9.0 * fit,
             Color { a: 0.15, ..GREEN },
@@ -348,16 +348,16 @@ impl Process for TunerUi {
         // needle
         ctx.line(
             x,
-            (25.0 - 16.0) * fit,
+            (-2.0 - 16.0) * fit,
             x,
-            (25.0 + 16.0) * fit,
+            (-2.0 + 16.0) * fit,
             main,
             2.5 * fit,
             0.2,
         );
         // note label
         let label = format!("{}{}", self.latch_name, self.latch_oct);
-        ctx.text(0.0, 95.0 * fit, font, label, 115.2 * fit, 700.0, main, 0.2);
+        ctx.text(0.0, 110.0 * fit, font, label, 172.8 * fit, 700.0, main, 0.2);
         // cents readout (one decimal, sign fixed for stable layout)
         let cents = if signal { self.cents_shown } else { 0.0 };
         let cents_s = format!(
@@ -365,14 +365,23 @@ impl Process for TunerUi {
             if cents >= 0.0 { "+" } else { "−" },
             cents.abs()
         );
-        ctx.text(0.0, -5.0 * fit, font, cents_s, 33.6 * fit, 600.0, main, 0.2);
+        ctx.text(
+            0.0,
+            -52.0 * fit,
+            font,
+            cents_s,
+            50.4 * fit,
+            600.0,
+            main,
+            0.2,
+        );
         // frequency + reference
         let freq_s = if signal {
             format!("{:.1} Hz  ·  A4={:.0}", self.freq_shown, a4)
         } else {
             format!("———  ·  A4={:.0}", a4)
         };
-        ctx.text(0.0, -45.0 * fit, font, freq_s, 26.4 * fit, 550.0, DIM, 0.2);
+        ctx.text(0.0, -104.0 * fit, font, freq_s, 39.6 * fit, 550.0, DIM, 0.2);
         // meter fill over the static track (freshness-gated, then decayed:
         // rms only updates on confident detections, so hold briefly and fade)
         let lvl_target = if fresh {
@@ -389,7 +398,7 @@ impl Process for TunerUi {
         let lvl = self.meter_level;
         ctx.rectangle(
             -160.0 * fit + 160.0 * fit * lvl,
-            -95.0 * fit,
+            -135.0 * fit,
             160.0 * fit * lvl,
             3.0 * fit,
             main,
@@ -769,7 +778,7 @@ impl TunerUi {
             h / 2.0 - 30.0 * fit,
             &font,
             "AUDIO SETTINGS",
-            22.8 * fit,
+            34.2 * fit,
             700.0,
             AMBER,
             z,
@@ -783,7 +792,7 @@ impl TunerUi {
                 y,
                 &font,
                 *label,
-                16.8 * fit,
+                25.2 * fit,
                 550.0,
                 DIM,
                 z,
@@ -794,7 +803,7 @@ impl TunerUi {
                 y,
                 &font,
                 self.current_value_label(*dd),
-                15.6 * fit,
+                23.4 * fit,
                 550.0,
                 if hov || open { AMBER } else { FG },
                 z + 0.01,
@@ -818,7 +827,7 @@ impl TunerUi {
             by,
             &font,
             "BACK",
-            15.6 * fit,
+            23.4 * fit,
             650.0,
             if back { AMBER } else { FG },
             z + 0.01,
@@ -836,7 +845,7 @@ impl TunerUi {
             by,
             &font,
             "APPLY & RESTART",
-            15.6 * fit,
+            23.4 * fit,
             700.0,
             if apply { AMBER } else { GREEN },
             z + 0.01,
@@ -848,7 +857,7 @@ impl TunerUi {
                 by + 34.0 * fit,
                 &font,
                 clip(note, 90),
-                14.4 * fit,
+                21.6 * fit,
                 550.0,
                 AMBER,
                 z,
@@ -861,7 +870,7 @@ impl TunerUi {
                     "saved to {} · audio: Apply restarts · A4/gate: live, saved on Apply",
                     crate::settings::FILE_NAME,
                 ),
-                13.2 * fit,
+                19.8 * fit,
                 550.0,
                 DIM,
                 z,
@@ -938,7 +947,7 @@ impl TunerUi {
                     iy,
                     &font,
                     clip(label, 36),
-                    12.5 * fit,
+                    18.7 * fit,
                     if sel { 700.0 } else { 550.0 },
                     if sel { GREEN } else { FG },
                     z + 0.06,
