@@ -6,8 +6,8 @@
 //!
 //! ```text
 //!        "A2"            note,  size 96, y +95
-//!   ├───────┼────┤        gauge ticks at y +25, x = cents·2.4 (±120 px)
-//!        ▲              needle line at x = smoothed cents·2.4
+//!   ├───────┼────┤        gauge ticks on the needle band, asinh scale
+//!        ▲              needle at x = cents_to_units(smoothed cents)
 //!       +4.1¢            cents, size 28, y −5
 //!   440.0 Hz · A4=440    freq + ref, size 22 dim, y −45
 //!   ▂▃▅ level ▅▃▂        dBFS meter, y −150, halfwidth 240 (0 to −48 dB)
@@ -21,15 +21,27 @@ use std::sync::{Arc, atomic::Ordering};
 
 // Clarity gating lives in the detector (Config::min_clarity, audio thread);
 // the UI only freshness-gates + level-gates (see process()).
-/// cents → px on the gauge (±50 ¢ spans ±120 px)
-/// Pixels per cent on the needle gauge. The ±50¢ sweep covers
-/// ±50 × this in fit units (±240 at 4.8, inside the ±320 half-width);
-/// the ±3¢ green band therefore draws ±14.4 units wide.
+/// Edge scale factor: ±50 ¢ spans ±240 fit units (the ±320 half-width
+/// keeps margins). NOTE: cents→position is NOT linear — see
+/// [`cents_to_units`]; CENTS_PX only fixes the outer scale.
 const CENTS_PX: f32 = 4.8;
+/// Half-width of the gauge, in fit units (50 ¢ × CENTS_PX).
+const GAUGE_HALF: f32 = 50.0 * CENTS_PX;
+/// Curvature knee of the gauge scale, in cents.
+const GAUGE_KNEE_CENTS: f32 = 10.0;
+/// Gauge mapping: sign-preserving asinh with a ±10 ¢ knee — near-linear
+/// and readable inside a few cents, progressively compressing beyond it.
+/// The middle gets ~2.1× the room (the ±3 ¢ verdict spans ~61 of 480
+/// units, was 29), edges still reach ±50 ¢. asinh over a power curve:
+/// finite slope at 0, so needle jitter near perfect pitch stays calm.
+fn cents_to_units(cents: f32) -> f32 {
+    let c = cents.clamp(-50.0, 50.0) / GAUGE_KNEE_CENTS;
+    GAUGE_HALF * c.asinh() / (50.0 / GAUGE_KNEE_CENTS).asinh()
+}
 /// |cents| inside which we call it in tune, when latched
 /// Half-width of the in-tune band, in cents — drives both the green zone
 /// behind the needle and the color lock. Strict on purpose; the band's
-/// *pixel* width comes from CENTS_PX, so widening the draw never widens
+/// *pixel* width comes from [`cents_to_units`], so widening the draw never widens
 /// the verdict.
 const IN_TUNE_CENTS: f64 = 3.0;
 /// ms of continuous same-note stability before latching
@@ -59,7 +71,7 @@ const FG: Color = rgb(0xe6, 0xe6, 0xea);
 pub fn static_scene() -> Scene {
     let mut ticks = Vec::new();
     for cents in (-50..=50).step_by(10) {
-        let x = cents as f32 * CENTS_PX;
+        let x = cents_to_units(cents as f32);
         let long = cents % 50 == 0;
         let half = if long { 9.0 } else { 4.5 };
         ticks.push(Box::new(SceneNode {
@@ -364,13 +376,14 @@ impl Process for TunerUi {
             );
         }
         let font = &self.font;
-        let x = self.needle_cents * CENTS_PX * fit;
+        let x = cents_to_units(self.needle_cents) * fit;
 
-        // in-tune zone behind the needle
+        // in-tune zone behind the needle — same nonlinear mapping, so the
+        // band edges sit exactly where the needle reads ±3 ¢
         ctx.rectangle(
             0.0,
             -2.0 * fit,
-            IN_TUNE_CENTS as f32 * CENTS_PX * fit,
+            cents_to_units(IN_TUNE_CENTS as f32) * fit,
             9.0 * fit,
             Color { a: 0.15, ..GREEN },
             0.05,
@@ -1051,5 +1064,35 @@ impl TunerUi {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cents_to_units;
+
+    #[test]
+    fn gauge_scale_endpoints_symmetry_and_midroom() {
+        // Endpoints land exactly on the gauge edges.
+        assert!((cents_to_units(50.0) - 240.0).abs() < 1e-3);
+        assert!((cents_to_units(-50.0) + 240.0).abs() < 1e-3);
+        // Odd and monotone — the gauge never folds.
+        let mut prev = f32::MIN;
+        let mut c = -50.0f32;
+        while c <= 50.0 {
+            let x = cents_to_units(c);
+            assert!(x > prev, "monotone at {c}");
+            assert!((cents_to_units(-c) + x).abs() < 1e-3, "odd at {c}");
+            prev = x;
+            c += 0.5;
+        }
+        // The point of it all: the ±3 ¢ verdict zone is ≥ 2× the linear
+        // span (was 14.4 units at 4.8 px/¢), and the 10 ¢ mark still
+        // sits in the first quarter of the gauge, not past its middle.
+        assert!(cents_to_units(3.0) >= 28.8, "mid gains too little room");
+        assert!(cents_to_units(10.0) < 120.0, "edges compress too weakly");
+        // Beyond-range input (EMA overshoot) cannot escape the gauge
+        // (epsilon: the mapping is (HALF·a)/a at the clamped edge).
+        assert!(cents_to_units(80.0) <= 240.0 + 1e-3);
     }
 }
