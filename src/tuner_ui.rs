@@ -100,6 +100,10 @@ pub struct TunerUi {
     page: Page,
     prev_mouse_down: bool,
     settings: Settings,
+    /// The audio-class settings this PROCESS actually booted with —
+    /// "restart required" is exactly: saved differs from these. (Params
+    /// outside this class apply live and never mark a restart.)
+    applied: Settings,
     settings_loaded: bool,
     devices_loaded: bool,
     open_dropdown: Option<Dropdown>,
@@ -154,6 +158,7 @@ impl TunerUi {
             page: Page::Main,
             prev_mouse_down: false,
             settings: Settings::default(),
+            applied: Settings::default(),
             settings_loaded: false,
             devices_loaded: false,
             open_dropdown: None,
@@ -256,6 +261,7 @@ impl Process for TunerUi {
         // consumes them; audio settings stay standalone-only by design.
         if !self.settings_loaded {
             let (settings, _) = Settings::load();
+            self.applied = settings.clone();
             self.settings = settings;
             self.settings_loaded = true;
         }
@@ -932,6 +938,21 @@ impl TunerUi {
         }
     }
 
+    /// True when the audio-class settings differ from what this process
+    /// booted with — the ONLY condition that makes Apply restart.
+    /// (Backend, devices, rate, buffer, input-latency: they configure the
+    /// streams nice-plug opened at startup. Params — channel, A4, gate,
+    /// window, curve — apply live and never set this.)
+    fn audio_dirty(&self) -> bool {
+        let (a, s) = (&self.applied, &self.settings);
+        a.backend != s.backend
+            || a.input_device != s.input_device
+            || a.output_device != s.output_device
+            || a.sample_rate != s.sample_rate
+            || a.period_size != s.period_size
+            || a.input_latency != s.input_latency
+    }
+
     fn process_settings_page(&mut self, ctx: &mut Context, clicked: bool) {
         let (w, h) = ctx.size();
         let fit = (w / 720.0).min(h / 440.0).max(0.45);
@@ -996,10 +1017,22 @@ impl TunerUi {
             );
         }
 
-        // Bottom actions.
+        // Bottom actions: BACK · RESET · APPLY. The Apply label — and its
+        // button's width — speak the truth: only an audio-class change
+        // (the settings nice-plug baked at startup) requires a restart;
+        // everything else goes live on save.
         let by = -h / 2.0 + 30.0 * fit;
+        let needs_restart = self.audio_dirty();
+        let apply_label = if needs_restart {
+            "APPLY & RESTART"
+        } else {
+            "APPLY"
+        };
+        let aw = (ctx.text_width(&font, apply_label, 23.4 * fit, 700.0) + 26.0 * fit) / 2.0;
+        let ax = w / 2.0 - 32.0 * fit - aw; // right-aligned with a margin
         let back = point_in(mouse, -w / 2.0 + 90.0 * fit, by, 65.0 * fit, 15.0 * fit);
-        let apply = point_in(mouse, w / 2.0 - 120.0 * fit, by, 110.0 * fit, 15.0 * fit);
+        let reset = point_in(mouse, 0.0, by, 65.0 * fit, 15.0 * fit);
+        let apply = point_in(mouse, ax, by, aw, 15.0 * fit);
         ctx.rectangle(
             -w / 2.0 + 90.0 * fit,
             by,
@@ -1019,21 +1052,21 @@ impl TunerUi {
             z + 0.01,
         );
         ctx.rectangle(
-            w / 2.0 - 120.0 * fit,
+            0.0,
             by,
-            110.0 * fit,
+            65.0 * fit,
             15.0 * fit,
-            if apply { HOVER } else { TRACK },
+            if reset { HOVER } else { TRACK },
             z,
         );
         ctx.text(
-            w / 2.0 - 120.0 * fit,
+            0.0,
             by,
             &font,
-            "APPLY & RESTART",
+            "RESET",
             23.4 * fit,
-            700.0,
-            if apply { AMBER } else { GREEN },
+            650.0,
+            if reset { AMBER } else { DIM },
             z + 0.01,
         );
 
@@ -1053,7 +1086,7 @@ impl TunerUi {
                 by + 34.0 * fit,
                 &font,
                 format!(
-                    "saved to {} · audio: Apply restarts · params: live, saved on Apply",
+                    "saved to {} · Apply restarts only when audio settings changed",
                     crate::settings::FILE_NAME,
                 ),
                 19.8 * fit,
@@ -1151,9 +1184,30 @@ impl TunerUi {
                     self.page = Page::Main;
                     self.save_note = None;
                 }
+                if reset {
+                    // Reset is a command, not a draft: defaults land in
+                    // memory, in the live param atomics, and on disk at
+                    // once. Audio streams keep running on the old config;
+                    // the Apply button now truthfully says whether a
+                    // restart is needed to catch up.
+                    self.settings = Settings::default();
+                    self.shared
+                        .a4_ref_bits
+                        .store(440f64.to_bits(), Ordering::Relaxed);
+                    self.shared.gate_db.store(-60.0);
+                    self.shared.input_channel.store(0);
+                    self.refresh_devices();
+                    self.save_note = match self.settings.save() {
+                        Ok(()) => Some("settings reset to defaults".to_string()),
+                        Err(e) => Some(format!("save failed: {e}")),
+                    };
+                }
                 if apply {
                     match self.settings.save() {
-                        Ok(()) => crate::request_restart(),
+                        // Only an audio-class change restarts; a pure
+                        // param save is already live — say so.
+                        Ok(()) if self.audio_dirty() => crate::request_restart(),
+                        Ok(()) => self.save_note = Some("saved — applied live".to_string()),
                         Err(e) => self.save_note = Some(format!("save failed: {e}")),
                     }
                 }
