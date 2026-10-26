@@ -117,6 +117,29 @@ pub fn list_output_devices(backend: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The system-default input/output device NAMES under this backend
+/// ("auto"/empty = the platform's default host). The settings page must
+/// name what "(default)" actually is — a dropdown row saying the word is
+/// a row saying nothing.
+pub fn default_device_names(backend: &str) -> (Option<String>, Option<String>) {
+    let host = if backend == "auto" || backend.is_empty() {
+        cpal::default_host()
+    } else {
+        match open_host(backend) {
+            Some(h) => h,
+            None => return (None, None),
+        }
+    };
+    let name = |d: Option<cpal::Device>| {
+        d.and_then(|d| d.description().ok())
+            .map(|x| x.name().to_owned())
+    };
+    (
+        name(host.default_input_device()),
+        name(host.default_output_device()),
+    )
+}
+
 fn find_device(backend: &str, name: &str) -> Option<cpal::Device> {
     open_host(backend)?
         .input_devices()

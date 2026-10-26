@@ -47,8 +47,9 @@ pub struct TunerSharedState {
     pub input_rms: AtomicCell<f32>,
     pub input_peak: AtomicCell<f32>,
     /// Selected input channel: 0 = auto, n = 1-based channel for BOTH the
-    /// meter and the analyzed mono feed (set live by the panel, seeded from
-    /// the settings file in standalone; stays 0 = auto inside a host).
+    /// meter and the analyzed mono feed. Defaults to 1 (the tuner's normal
+    /// single-instrument cable; auto would drift onto a noisy sibling);
+    /// set live by the panel, seeded from the settings file in standalone.
     pub input_channel: AtomicCell<u32>,
     /// Standalone top-level window position, physical px (top-left),
     /// polled by the gui on Windows; read when geometry is persisted.
@@ -92,7 +93,7 @@ impl TunerSharedState {
             rms: AtomicCell::new(0.0),
             input_rms: AtomicCell::new(0.0),
             input_peak: AtomicCell::new(0.0),
-            input_channel: AtomicCell::new(0),
+            input_channel: AtomicCell::new(1),
             window_pos: std::sync::Mutex::new(None),
             pending_geom: std::sync::Mutex::new(None),
             last_detection_ms: AtomicU64::new(0),

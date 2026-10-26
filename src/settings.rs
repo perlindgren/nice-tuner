@@ -41,9 +41,10 @@ pub struct Settings {
     /// plays that role. Not CLI flags — never fed to `effective_args`.
     pub a4_ref: Option<f32>,
     pub gate_db: Option<f32>,
-    /// Input channel, 1-based; None/0 = auto (meter: hottest channel,
-    /// detector: honest mono mix). A noisy sibling channel makes
-    /// max-channel wrong — the right input must be picked explicitly.
+    /// Input channel, 1-based; absent = channel 1 (the tuner's default
+    /// single-instrument cable). An explicit 0 selects auto (hottest
+    /// channel). A noisy sibling makes auto wrong — the right input
+    /// should be picked explicitly.
     pub input_channel: Option<u32>,
     /// Tuning-verdict half-width and gauge curvature, cents (None = 3.0 /
     /// 5.0). Look-and-judgement values read by the editor itself, also in

@@ -100,6 +100,8 @@ pub struct TunerUi {
     page: Page,
     prev_mouse_down: bool,
     settings: Settings,
+    /// Rising-edge memory for Escape on the settings page.
+    esc_held: bool,
     /// The audio-class settings this PROCESS actually booted with —
     /// "restart required" is exactly: saved differs from these. (Params
     /// outside this class apply live and never mark a restart.)
@@ -112,6 +114,10 @@ pub struct TunerUi {
     input_opts: Vec<String>,
     output_opts: Vec<String>,
     rate_opts: Vec<String>,
+    /// System-default device names for the current backend: the concrete
+    /// value "(default)" hides, shown instead in the device rows.
+    default_in: Option<String>,
+    default_out: Option<String>,
     /// Rate the driver itself is set to, if known — what "(default)"
     /// resolves to at startup (see main.rs / devices::driver_default_rate).
     driver_rate: Option<f32>,
@@ -158,6 +164,7 @@ impl TunerUi {
             page: Page::Main,
             prev_mouse_down: false,
             settings: Settings::default(),
+            esc_held: false,
             applied: Settings::default(),
             settings_loaded: false,
             devices_loaded: false,
@@ -167,6 +174,8 @@ impl TunerUi {
             input_opts: Vec::new(),
             output_opts: Vec::new(),
             rate_opts: Vec::new(),
+            default_in: None,
+            default_out: None,
             driver_rate: None,
             buffer_opts: Vec::new(),
             save_note: None,
@@ -693,6 +702,9 @@ impl TunerUi {
         {
             self.input_opts = crate::devices::list_input_devices(&b);
             self.output_opts = crate::devices::list_output_devices(&b);
+            let (din, dout) = crate::devices::default_device_names(&b);
+            self.default_in = din;
+            self.default_out = dout;
         }
         // A saved device the current enumeration does not list is KEPT,
         // not dropped: ASIO enumeration is driver-flaky (cold starts,
@@ -728,162 +740,243 @@ impl TunerUi {
         }
     }
 
-    fn dropdown_items(&self, dd: Dropdown) -> Vec<String> {
-        let with_default = |v: &Vec<String>| {
-            std::iter::once("(default)".to_owned())
-                .chain(v.iter().cloned())
-                .collect::<Vec<_>>()
-        };
-        match dd {
-            Dropdown::Backend => self.backend_opts.iter().map(|(_, l)| l.clone()).collect(),
-            Dropdown::Input => with_default(&self.input_opts),
-            Dropdown::Output => with_default(&self.output_opts),
-            Dropdown::Rate => with_default(&self.rate_opts),
-            Dropdown::Buffer => with_default(&self.buffer_opts),
-            Dropdown::InputCh => ["Auto (loudest)", "1", "2", "3", "4", "5", "6", "7", "8"]
-                .into_iter()
-                .map(String::from)
-                .collect(),
-            Dropdown::A4 => A4_OPTIONS.iter().map(|v| format!("{v:.0} Hz")).collect(),
-            Dropdown::Gate => GATE_OPTIONS.iter().map(|v| format!("{v:.0} dB")).collect(),
-            Dropdown::InTune => IN_TUNE_OPTIONS
-                .iter()
-                .map(|v| format!("{v:.0} \u{a2}"))
-                .collect(),
-            Dropdown::GaugeCurve => GAUGE_KNEE_OPTIONS
-                .iter()
-                .map(|v| format!("{v:.0} \u{a2} knee"))
-                .collect(),
-        }
-    }
+    /// nice-plug's baked period-size default (its clap `default_value`).
+    const DEFAULT_BUFFER: u32 = 512;
 
-    fn selected_index(&self, dd: Dropdown) -> usize {
-        let pick_opt = |list: &Vec<String>, saved: &Option<String>| {
-            saved
-                .as_ref()
-                .and_then(|d| list.iter().position(|x| x == d))
-                .map_or(0, |i| i + 1)
-        };
-        match dd {
+    /// The concrete value the default hides — shown wherever the word
+    /// "(default)" used to stand. None = genuinely unknowable (no system
+    /// default device, silent driver) → rendered as an em dash.
+    fn default_label(&self, dd: Dropdown) -> Option<String> {
+        Some(match dd {
             Dropdown::Backend => self
                 .backend_opts
                 .iter()
-                .position(|(id, _)| id == self.backend_key())
-                .unwrap_or(0),
-            Dropdown::Input => pick_opt(&self.input_opts, &self.settings.input_device),
-            Dropdown::Output => pick_opt(&self.output_opts, &self.settings.output_device),
+                .find(|(id, _)| id == "auto")
+                .map(|(_, l)| l.clone())
+                .unwrap_or_else(|| "auto".to_owned()),
+            Dropdown::Input => self.default_in.clone()?,
+            Dropdown::Output => self.default_out.clone()?,
+            Dropdown::Rate => fmt_rate(self.driver_rate?),
+            Dropdown::Buffer => Self::DEFAULT_BUFFER.to_string(),
+            Dropdown::InputCh => "1".to_owned(),
+            Dropdown::A4 => "440".to_owned(),
+            Dropdown::Gate => "-60".to_owned(),
+            Dropdown::InTune => format!("{IN_TUNE_CENTS:.0}"),
+            Dropdown::GaugeCurve => format!("{GAUGE_KNEE_CENTS:.0}"),
+        })
+    }
+
+    /// The ONE list a dropdown shows, is selected from, and is picked
+    /// from: row 0 is the default — its concrete VALUE, starred — and
+    /// the default never reappears among the plain options. Picking row
+    /// 0 means "follow the default", which keeps tracking hardware
+    /// (system device, driver rate) where a pinned option would freeze
+    /// a snapshot. Pairs are (display label, raw value); second item of
+    /// the tuple is the default row's raw value ("follow" sentinel).
+    fn dropdown_rows(&self, dd: Dropdown) -> (Vec<(String, String)>, String) {
+        // Plain options: (display label, raw value it selects).
+        let opts: Vec<(String, String)> = match dd {
+            Dropdown::Backend => self
+                .backend_opts
+                .iter()
+                .map(|(id, l)| (l.clone(), id.clone()))
+                .collect(),
+            Dropdown::Input | Dropdown::Output => {
+                let list = match dd {
+                    Dropdown::Input => &self.input_opts,
+                    _ => &self.output_opts,
+                };
+                list.iter().map(|n| (n.clone(), n.clone())).collect()
+            }
+            Dropdown::Rate => self
+                .rate_opts
+                .iter()
+                .map(|l| (l.clone(), l.split(' ').next().unwrap_or("").to_owned()))
+                .collect(),
+            Dropdown::Buffer => self
+                .buffer_opts
+                .iter()
+                .map(|l| (l.clone(), l.clone()))
+                .collect(),
+            Dropdown::InputCh => ["Auto (loudest)", "2", "3", "4", "5", "6", "7", "8"]
+                .into_iter()
+                .map(|l| (l.to_owned(), l.to_owned()))
+                .collect(),
+            Dropdown::A4 => A4_OPTIONS
+                .iter()
+                .map(|v| (format!("{v:.0} Hz"), format!("{v:.0}")))
+                .collect(),
+            Dropdown::Gate => GATE_OPTIONS
+                .iter()
+                .map(|v| (format!("{v:.0} dB"), format!("{v:.0}")))
+                .collect(),
+            Dropdown::InTune => IN_TUNE_OPTIONS
+                .iter()
+                .map(|v| (format!("{v:.0} \u{a2}"), format!("{v:.0}")))
+                .collect(),
+            Dropdown::GaugeCurve => GAUGE_KNEE_OPTIONS
+                .iter()
+                .map(|v| (format!("{v:.0} \u{a2} knee"), format!("{v:.0}")))
+                .collect(),
+        };
+        // Raw value of the default row ("" when unknowable: the row
+        // still exists — "\u{2014} *" — and still means follow).
+        let def_raw = match dd {
+            Dropdown::Backend => "auto".to_owned(),
+            Dropdown::Input => self.default_in.clone().unwrap_or_default(),
+            Dropdown::Output => self.default_out.clone().unwrap_or_default(),
+            Dropdown::Rate => self.driver_rate.map(|r| r.to_string()).unwrap_or_default(),
+            Dropdown::Buffer => Self::DEFAULT_BUFFER.to_string(),
+            Dropdown::InputCh => "1".to_owned(),
+            Dropdown::A4 => "440".to_owned(),
+            Dropdown::Gate => "-60".to_owned(),
+            Dropdown::InTune => format!("{IN_TUNE_CENTS:.0}"),
+            Dropdown::GaugeCurve => format!("{GAUGE_KNEE_CENTS:.0}"),
+        };
+        let head = match self.default_label(dd) {
+            Some(d) => format!("{d} *"),
+            None => "\u{2014} *".to_string(),
+        };
+        let mut rows = vec![(head, def_raw.clone())];
+        rows.extend(
+            opts.into_iter()
+                .filter(|(_, raw)| raw.is_empty() || raw != &def_raw),
+        );
+        (rows, def_raw)
+    }
+
+    fn dropdown_items(&self, dd: Dropdown) -> Vec<String> {
+        self.dropdown_rows(dd)
+            .0
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect()
+    }
+
+    /// The row carrying the current truth: row 0 while the setting is
+    /// unset (or set to exactly the default), else the matching option,
+    /// else row 0 again (unknown value = shown as following default).
+    fn selected_index(&self, dd: Dropdown) -> usize {
+        let current: String = match dd {
+            Dropdown::Backend => self
+                .settings
+                .backend
+                .clone()
+                .unwrap_or_else(|| "auto".into()),
+            Dropdown::Input => self
+                .settings
+                .input_device
+                .clone()
+                .or_else(|| self.default_in.clone())
+                .unwrap_or_default(),
+            Dropdown::Output => self
+                .settings
+                .output_device
+                .clone()
+                .or_else(|| self.default_out.clone())
+                .unwrap_or_default(),
             Dropdown::Rate => self
                 .settings
                 .sample_rate
-                .and_then(|r| self.rate_opts.iter().position(|s| *s == fmt_rate(r)))
-                .map_or(0, |i| i + 1),
+                .map(|r| r.to_string())
+                .or_else(|| self.driver_rate.map(|r| r.to_string()))
+                .unwrap_or_default(),
             Dropdown::Buffer => self
                 .settings
                 .period_size
-                .and_then(|p| self.buffer_opts.iter().position(|s| *s == p.to_string()))
-                .map_or(0, |i| i + 1),
-            Dropdown::InputCh => self.shared.input_channel.load().min(8) as usize,
-            Dropdown::A4 => A4_OPTIONS
-                .iter()
-                .position(|v| (*v as f64 - self.shared.a4_ref()).abs() < 0.05)
-                .unwrap_or(0),
-            Dropdown::Gate => GATE_OPTIONS
-                .iter()
-                .position(|v| (*v - self.shared.gate_db.load()).abs() < 0.05)
-                .unwrap_or(0),
-            Dropdown::InTune => IN_TUNE_OPTIONS
-                .iter()
-                .position(|v| {
-                    (*v - self.settings.in_tune_cents.unwrap_or(IN_TUNE_CENTS as f32)).abs() < 0.05
-                })
-                .unwrap_or(2),
-            Dropdown::GaugeCurve => GAUGE_KNEE_OPTIONS
-                .iter()
-                .position(|v| {
-                    (*v - self.settings.gauge_knee_cents.unwrap_or(GAUGE_KNEE_CENTS)).abs() < 0.05
-                })
-                .unwrap_or(2),
-        }
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| Self::DEFAULT_BUFFER.to_string()),
+            Dropdown::InputCh => match self.shared.input_channel.load() {
+                0 => "Auto (loudest)".to_string(),
+                n => n.to_string(),
+            },
+            Dropdown::A4 => format!("{:.0}", self.shared.a4_ref()),
+            Dropdown::Gate => format!("{:.0}", self.shared.gate_db.load()),
+            Dropdown::InTune => format!(
+                "{:.0}",
+                self.settings.in_tune_cents.unwrap_or(IN_TUNE_CENTS as f32)
+            ),
+            Dropdown::GaugeCurve => format!(
+                "{:.0}",
+                self.settings.gauge_knee_cents.unwrap_or(GAUGE_KNEE_CENTS)
+            ),
+        };
+        self.dropdown_rows(dd)
+            .0
+            .iter()
+            .position(|(_, raw)| *raw == current)
+            .unwrap_or(0)
     }
 
     fn pick(&mut self, dd: Dropdown, idx: usize) {
+        // The raw value lives on the same row the user clicked — no
+        // index arithmetic anywhere. Row 0 carries the default's raw
+        // value; the setting is stored as None (follow) exactly then.
+        let (rows, def_raw) = self.dropdown_rows(dd);
+        let Some((_, raw)) = rows.get(idx).cloned() else {
+            return;
+        };
+        let at_default = raw.is_empty() || raw == def_raw;
         match dd {
             Dropdown::Backend => {
-                if let Some((id, _)) = self.backend_opts.get(idx) {
-                    let id = id.clone();
-                    self.settings.backend = if id == "auto" { None } else { Some(id) };
-                    self.refresh_devices();
-                }
+                self.settings.backend = if raw == "auto" { None } else { Some(raw) };
+                self.refresh_devices();
             }
             Dropdown::Input => {
-                self.settings.input_device = if idx == 0 {
-                    None
-                } else {
-                    self.input_opts.get(idx - 1).cloned()
-                };
+                self.settings.input_device = if at_default { None } else { Some(raw) };
+                // Choosing an input picks the SAME interface as output:
+                // one device owns both clock and monitoring path; a
+                // mismatched output would silently be another driver.
+                self.settings.output_device = self.settings.input_device.clone();
                 self.refresh_stream_options();
             }
             Dropdown::Output => {
-                self.settings.output_device = if idx == 0 {
-                    None
-                } else {
-                    self.output_opts.get(idx - 1).cloned()
-                };
+                self.settings.output_device = if at_default { None } else { Some(raw) };
                 // Duplex constraint: the output device narrows the buffer
                 // range too — recompute.
                 self.refresh_stream_options();
             }
             Dropdown::Rate => {
-                self.settings.sample_rate = if idx == 0 {
-                    None
-                } else {
-                    self.rate_opts
-                        .get(idx - 1)
-                        .and_then(|s| s.split(' ').next())
-                        .and_then(|t| t.parse().ok())
-                };
+                self.settings.sample_rate = if at_default { None } else { raw.parse().ok() };
             }
             Dropdown::Buffer => {
-                self.settings.period_size = if idx == 0 {
-                    None
-                } else {
-                    self.buffer_opts.get(idx - 1).and_then(|s| s.parse().ok())
-                };
+                self.settings.period_size = if at_default { None } else { raw.parse().ok() };
             }
             // Channel select is live for BOTH meter and detection: the RT
             // feed becomes exactly this channel (auto keeps the mono mix /
             // hottest-channel meter). No restart; APPLY persists.
             Dropdown::InputCh => {
-                self.settings.input_channel = Some(idx as u32);
-                self.shared.input_channel.store(idx as u32);
+                let ch = if raw == "Auto (loudest)" {
+                    0
+                } else {
+                    raw.parse().unwrap_or(1)
+                };
+                self.settings.input_channel = if at_default { None } else { Some(ch) };
+                self.shared.input_channel.store(ch);
             }
             // Params are live the moment they are picked (no restart needed);
             // APPLY only decides whether they persist to the next launch.
             Dropdown::A4 => {
-                if let Some(v) = A4_OPTIONS.get(idx) {
-                    self.shared
-                        .a4_ref_bits
-                        .store((*v as f64).to_bits(), Ordering::Relaxed);
-                    self.settings.a4_ref = Some(*v);
-                }
+                let v: f32 = raw.parse().unwrap_or(440.0);
+                self.shared
+                    .a4_ref_bits
+                    .store((v as f64).to_bits(), Ordering::Relaxed);
+                self.settings.a4_ref = if at_default { None } else { Some(v) };
             }
             Dropdown::Gate => {
-                if let Some(v) = GATE_OPTIONS.get(idx) {
-                    self.shared.gate_db.store(*v);
-                    self.settings.gate_db = Some(*v);
-                }
+                let v: f32 = raw.parse().unwrap_or(-60.0);
+                self.shared.gate_db.store(v);
+                self.settings.gate_db = if at_default { None } else { Some(v) };
             }
             // Editor look/judgement: applied the instant they are picked
             // (draw + verdict re-read settings every frame); APPLY persists.
             Dropdown::InTune => {
-                if let Some(v) = IN_TUNE_OPTIONS.get(idx) {
-                    self.settings.in_tune_cents = Some(*v);
-                }
+                let v: f32 = raw.parse().unwrap_or(IN_TUNE_CENTS as f32);
+                self.settings.in_tune_cents = if at_default { None } else { Some(v) };
             }
             Dropdown::GaugeCurve => {
-                if let Some(v) = GAUGE_KNEE_OPTIONS.get(idx) {
-                    self.settings.gauge_knee_cents = Some(*v);
-                }
+                let v: f32 = raw.parse().unwrap_or(GAUGE_KNEE_CENTS);
+                self.settings.gauge_knee_cents = if at_default { None } else { Some(v) };
             }
         }
         self.open_dropdown = None;
@@ -944,32 +1037,31 @@ impl TunerUi {
                 .find(|(id, _)| id == self.backend_key())
                 .map(|(_, l)| l.clone())
                 .unwrap_or_else(|| self.backend_key().to_owned()),
-            Dropdown::Rate => match self.settings.sample_rate {
-                // "(default)" now genuinely means the driver's own rate —
-                // say which one, or the setting looks arbitrary.
-                None => match self.driver_rate {
-                    Some(r) => format!("{} (driver)", fmt_rate(r)),
-                    None => "(default)".into(),
-                },
-                Some(r) => fmt_rate(r),
-            },
+            Dropdown::Rate => self
+                .settings
+                .sample_rate
+                .map(fmt_rate)
+                .or_else(|| self.default_label(Dropdown::Rate))
+                .unwrap_or_else(|| "\u{2014}".into()),
             Dropdown::Buffer => self
                 .settings
                 .period_size
                 .map(|p| p.to_string())
-                .unwrap_or_else(|| "(default)".into()),
+                .unwrap_or_else(|| Self::DEFAULT_BUFFER.to_string()),
             Dropdown::Input => self
                 .settings
                 .input_device
-                .as_deref()
-                .map(|d| clip(d, 26))
-                .unwrap_or_else(|| "(system default)".into()),
+                .clone()
+                .or_else(|| self.default_in.clone())
+                .map(|d| clip(&d, 26))
+                .unwrap_or_else(|| "\u{2014}".into()),
             Dropdown::Output => self
                 .settings
                 .output_device
-                .as_deref()
-                .map(|d| clip(d, 26))
-                .unwrap_or_else(|| "(system default)".into()),
+                .clone()
+                .or_else(|| self.default_out.clone())
+                .map(|d| clip(&d, 26))
+                .unwrap_or_else(|| "\u{2014}".into()),
             Dropdown::InputCh => match self.shared.input_channel.load() {
                 0 => "auto (loudest)".to_string(),
                 n => format!("channel {n}"),
@@ -1009,13 +1101,32 @@ impl TunerUi {
         let font = std::sync::Arc::clone(&self.font);
         let z = 0.4f32;
 
+        // Escape changes nothing — it UN-changes: close an open dropdown,
+        // or leave the page with drafts unsaved. Never a write, never a
+        // restart.
+        let esc = ctx.key_down(frost::KeyCode::Escape);
+        if esc && !self.esc_held {
+            if self.open_dropdown.is_some() {
+                self.open_dropdown = None;
+                self.list_scroll = 0.0;
+            } else {
+                self.page = Page::Main;
+                self.save_note = None;
+                return;
+            }
+        }
+        self.esc_held = esc;
+
+        // Audio block first, in signal order (what feeds me, which channel
+        // of it, what I answer through, then the stream's shape), then a
+        // gap, then the live param block.
         const ROWS: [(&str, Dropdown); 10] = [
             ("Backend", Dropdown::Backend),
-            ("Sample rate", Dropdown::Rate),
-            ("Buffer (frames)", Dropdown::Buffer),
             ("Input device", Dropdown::Input),
             ("Input channel", Dropdown::InputCh),
             ("Output device", Dropdown::Output),
+            ("Buffer (frames)", Dropdown::Buffer),
+            ("Sample rate", Dropdown::Rate),
             ("A4 reference", Dropdown::A4),
             ("Input gate", Dropdown::Gate),
             ("In-tune window", Dropdown::InTune),
@@ -1028,8 +1139,18 @@ impl TunerUi {
         let row_y = |i: usize| {
             h / 2.0 - 40.0 * fit - i as f32 * 33.0 * fit - if i >= 6 { 14.0 } else { 0.0 } * fit
         };
-        let bx = w / 2.0 - 185.0 * fit; // value-button column
-        let bhw = 165.0 * fit;
+        // Left column: genuinely LEFT-aligned. ctx.text centers INK, so
+        // each label is centered at margin + half its measured width —
+        // long names can no longer spill past the left screen edge.
+        let lx = -w / 2.0 + 18.0 * fit;
+        // Right column: value buttons, three characters wider, anchored by
+        // their RIGHT edge at the screen margin — they cannot spill right
+        // no matter how wide the dropdown text grows.
+        let charw = ctx
+            .text_width(&font, "0", 23.4 * fit, 550.0)
+            .max(14.0 * fit);
+        let bhw = 165.0 * fit + 3.0 * charw;
+        let bx = w / 2.0 - 18.0 * fit - bhw;
         let bhh = 14.0 * fit;
 
         // Wheel scrolls the open dropdown.
@@ -1043,16 +1164,8 @@ impl TunerUi {
             let y = row_y(i);
             let open = self.open_dropdown == Some(*dd);
             let hov = point_in(mouse, bx, y, bhw, bhh);
-            ctx.text(
-                -w / 2.0 + 105.0 * fit,
-                y,
-                &font,
-                *label,
-                25.2 * fit,
-                550.0,
-                DIM,
-                z,
-            );
+            let lw = ctx.text_width(&font, label, 25.2 * fit, 550.0);
+            ctx.text(lx + lw / 2.0, y, &font, *label, 25.2 * fit, 550.0, DIM, z);
             ctx.rectangle(bx, y, bhw, bhh, if open || hov { HOVER } else { TRACK }, z);
             ctx.text(
                 bx,
@@ -1118,9 +1231,21 @@ impl TunerUi {
             if reset { AMBER } else { DIM },
             z + 0.01,
         );
+        ctx.rectangle(ax, by, aw, 15.0 * fit, if apply { HOVER } else { TRACK }, z);
+        ctx.text(
+            ax,
+            by,
+            &font,
+            apply_label,
+            23.4 * fit,
+            700.0,
+            if apply { AMBER } else { GREEN },
+            z + 0.01,
+        );
 
-        match &self.save_note {
-            Some(note) => ctx.text(
+        // Transient status only, on demand — no standing banner text.
+        if let Some(note) = &self.save_note {
+            ctx.text(
                 0.0,
                 by + 34.0 * fit,
                 &font,
@@ -1129,20 +1254,7 @@ impl TunerUi {
                 550.0,
                 AMBER,
                 z,
-            ),
-            None => ctx.text(
-                0.0,
-                by + 34.0 * fit,
-                &font,
-                format!(
-                    "saved to {} · Apply restarts only when audio settings changed",
-                    crate::settings::FILE_NAME,
-                ),
-                19.8 * fit,
-                550.0,
-                DIM,
-                z,
-            ),
+            );
         }
 
         // Open dropdown: drawn last (on top), items hit first.
@@ -1244,7 +1356,7 @@ impl TunerUi {
                         .a4_ref_bits
                         .store(440f64.to_bits(), Ordering::Relaxed);
                     self.shared.gate_db.store(-60.0);
-                    self.shared.input_channel.store(0);
+                    self.shared.input_channel.store(1);
                     self.refresh_devices();
                     self.save_note = match self.settings.save() {
                         Ok(()) => Some("settings reset to defaults".to_string()),
