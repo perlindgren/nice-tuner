@@ -40,11 +40,10 @@ crossbeam = "0.8"
 keyboard-types = "0.8.3"
 pitch = { path = "crates/pitch" }
 # M3: frost fork (embedded renderer, winit run loop + rodio removed)
-# frost = { path = "vendor/frost" }
+frost = { path = "vendor/frost" }
 
 [workspace]
 # crates/pitch and vendor/frost are excluded while built as standalone
 # packages; at final integration they become regular members via path deps
 # (see stage/integration_notes.md).
-members = ["xtask"]
-exclude = ["vendor/frost"]
+members = ["xtask", "crates/pitch", "vendor/frost"]

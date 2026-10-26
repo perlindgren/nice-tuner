@@ -39,7 +39,7 @@ impl Rng {
     }
 
     /// The stream's current state — the value the next draw advances from.
-    /// Storing it, and restoring it with [`set_state`], resumes the stream
+    /// Storing it, and restoring it with [`Self::set_state`], resumes the stream
     /// exactly where it left off, which is what a save file needs.
     pub fn state(&self) -> u64 {
         self.0

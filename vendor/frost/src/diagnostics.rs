@@ -334,7 +334,7 @@ impl DiagnosticsFlags {
     /// app, and the overlay's own count as three series.
     pub const DRAW: Self = Self(1 << 3);
     /// The scaling line: the filter that stretches the fixed render size
-    /// buffer over the window (see [`crate::Config::blit_filter`]), which
+    /// buffer over the window (see [`crate::embedded::EmbeddedConfig::blit_filter`]), which
     /// Alt-F flips between bilinear and nearest. A readout line only — it
     /// has no chart.
     pub const SCALING: Self = Self(1 << 4);
@@ -1133,10 +1133,19 @@ impl Process for Diagnostics {
             // logical user space and the physical panel never do — one
             // app pixel per screen pixel, the case with nothing to say,
             // keeps the line bare.
-            let physical = ctx.window().map(|wnd| wnd.inner_size());
+            // The physical panel behind the user space, derived from the
+            // scale factor: an embedding reports no window to ask, and
+            // the scale is what the host reported it with, so
+            // `logical × scale` is the physical size the surface carries.
+            // In fixed render size mode the canvas scale is `1.0` and the
+            // surface may still differ; the line then says only what the
+            // engine truly knows — the buffer it draws in.
+            let factor = ctx.scale_factor();
+            let physical = ((factor - 1.0).abs() > f32::EPSILON)
+                .then(|| ((w * factor).round() as u32, (h * factor).round() as u32));
             let mut size_text = match physical {
-                Some(px) if (px.width, px.height) != (w as u32, h as u32) => {
-                    format!("{}x{} ({}x{})", w as u32, h as u32, px.width, px.height)
+                Some((pw, ph)) if (pw, ph) != (w as u32, h as u32) => {
+                    format!("{}x{} ({}x{})", w as u32, h as u32, pw, ph)
                 }
                 _ => format!("{}x{}", w as u32, h as u32),
             };

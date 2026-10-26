@@ -99,7 +99,7 @@ impl<T: Tweenable> Tween<T> {
         self.repeat
     }
 
-    /// Restores the elapsed time to `time` seconds: the next [`tick`]
+    /// Restores the elapsed time to `time` seconds: the next [`Self::tick`]
     /// continues from the value the tween had at that moment, so an
     /// in-flight tween can be saved and resumed mid-travel.
     pub fn set_time(&mut self, time: f32) {

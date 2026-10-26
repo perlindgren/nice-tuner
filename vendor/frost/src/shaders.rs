@@ -206,6 +206,9 @@ mod tests {
 
     use super::*;
     use crate::backend::{LIGHT_FIELD_BUFFER_MIN, OCCLUDER_FIELD_BUFFER_MIN};
+    // The very naga wgpu compiles shaders with, re-exported — one copy
+    // in the graph, no separate dev-dependency to drift from it.
+    use wgpu::naga;
 
     /// The ten shader sources with their file names.
     fn all_shaders() -> [(&'static str, &'static str); 10] {

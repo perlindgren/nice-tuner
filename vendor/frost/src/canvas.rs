@@ -47,7 +47,7 @@ pub(crate) struct Occluder {
 ///
 /// These are *logical* pixels — the OS's points, which the display's scale
 /// factor turns into the physical panel pixels the frame is rendered at
-/// ([`Canvas::scale_factor`], [`crate::Config::window_size`]). On a 100% display one
+/// ([`Canvas::scale_factor`], [`Embedded::new`](crate::embedded::Embedded::new))). On a 100% display one
 /// unit is one panel pixel; on a Retina Mac two. Everything the frame holds —
 /// coordinates, text sizes, line widths, the mouse — shares this one unit, so
 /// an app laid out in it looks the same on every display and stays sharp on
@@ -455,7 +455,7 @@ impl Canvas {
 
     /// Draws a [`Scene`] into the canvas.
     ///
-    /// The scene passed to [`crate::run`] is drawn automatically every frame, after
+    /// The scene handed to an [`Embedded`](crate::embedded::Embedded) is drawn automatically every frame, after
     /// the [`crate::Process`] runs; use this method to draw additional scenes.
     ///
     /// Scene coordinates are the same user space as the direct draw methods:

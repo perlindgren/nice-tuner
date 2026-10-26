@@ -179,7 +179,7 @@ pub(crate) struct Bloom {
     /// with zeros past the preset's end: all zero is how "no bloom" reaches the
     /// shader, whose per-level guards on it keep the samples off the frame.
     pub(crate) weights: [f32; MAX_LEVELS],
-    /// What the app is asking for right now: `Config::bloom` at startup,
+    /// What the app is asking for right now: `EmbeddedConfig::bloom` at startup,
     /// [`Context::set_bloom`](crate::Context::set_bloom) afterwards. Kept
     /// because the weights are derived from it, and it can change under us.
     strength: f32,
@@ -196,7 +196,7 @@ pub(crate) struct Bloom {
 impl Bloom {
     /// Builds the chain for a frame buffer of `extent` reading `emissive`.
     ///
-    /// `strength` is [`Config::bloom`](crate::Config::bloom). Anything at or
+    /// `strength` is [`EmbeddedConfig::bloom`](crate::embedded::EmbeddedConfig::bloom). Anything at or
     /// below zero — and any frame with no float target to read, which is the
     /// same answer the emissive target itself gets — gives a
     /// [dormant](Self::dormant) chain.

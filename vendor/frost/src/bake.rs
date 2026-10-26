@@ -86,7 +86,7 @@ pub enum Role {
     /// Blocks light. Baked into the rectangles a frame declares, so it
     /// decides where a light's shadow falls.
     Occlude,
-    /// Blocks movement. Baked into [`collision`](crate::collision) shapes a
+    /// Blocks movement. Baked into `collision` shapes a
     /// movement step pushes a body out of, carrying its [`Material`].
     Solid,
     /// Marks a target. Baked into shapes the game tests to ask *what did I

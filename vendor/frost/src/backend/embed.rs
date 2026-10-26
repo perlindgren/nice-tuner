@@ -132,7 +132,7 @@ impl<P: Process> Embedded<P> {
     /// modes are absent — a blocking `Fifo` present could stall the
     /// host's main thread for a refresh, and no guest in someone else's
     /// GUI has that right. The cadence belongs to the host's timer; the
-    /// [`Context::set_vsync`] flag still exists for apps that read it,
+    /// [`crate::Context::set_vsync`] flag still exists for apps that read it,
     /// but it moves no swap chain here.
     ///
     /// The engine asks a private [`Instance`] for an adapter at startup

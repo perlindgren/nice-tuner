@@ -21,12 +21,10 @@
 //! names the writer's type, which neither a viewer nor an editor needs.
 //!
 //! The tree carries the source's own shapes: containers hold their fold
-//! state in `open`, and every value travels in an [`Item`] with the
+//! state in `open`, and every value travels in an [`Item`](crate::ron::Item) with the
 //! comments that surrounded it, which is what makes the round trip
 //! lossless. What the module does not own is the *view*: the flattener
-//! that turns a tree into drawable rows (`VKind`, `Row`, `flatten`,
-//! `layout`) belongs to whoever paints it and lives in
-//! `examples/ron_view/view.rs`, path-included by both examples.
+//! that turns a tree into drawable rows belongs to whoever paints it.
 
 /// What an atom's text is, for coloring and weighting it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

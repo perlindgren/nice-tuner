@@ -82,7 +82,7 @@ pub struct TunerUi {
     font: Arc<[u8]>,
     // smoothed display state
     needle_cents: f32, // EMA'd cents shown on the gauge
-    latch_midi: i32,   // -1 = nothing latched
+    latch_midi: i16,   // -1 = nothing latched
     latch_name: &'static str,
     latch_oct: i8,
     cents_shown: f64,
@@ -121,7 +121,7 @@ impl Process for TunerUi {
         let freq = self.shared.freq_hz.load();
         let rms = self.shared.rms.load() as f64;
         let a4 = self.shared.a4_ref();
-        let gate_db = self.shared.gate_db.load();
+        let gate_db = self.shared.gate_db.load() as f64;
         let rms_db = if rms > 1e-7 {
             20.0 * rms.log10()
         } else {
@@ -140,7 +140,7 @@ impl Process for TunerUi {
             if note.midi == self.latch_midi {
                 self.stable_ms += dt * 1000.0;
             } else {
-                self.latch_midi = note.midi as i32;
+                self.latch_midi = note.midi;
                 self.latch_name = note.name;
                 self.latch_oct = note.octave;
                 self.stable_ms = 0.0;
@@ -249,59 +249,61 @@ impl Process for TunerUi {
 // ---- input mapping (baseview 0.3.3 / keyboard_types 0.8 → frost) ----------
 
 pub fn map_key(key: &keyboard_types::Key) -> Option<frost::KeyCode> {
-    use keyboard_types::Key;
-    Some(match key {
-        Key::Character(c) => match c.0.as_str() {
-            "a" | "A" => frost::KeyCode::KeyA,
-            "b" | "B" => frost::KeyCode::KeyB,
-            "c" | "C" => frost::KeyCode::KeyC,
-            "d" | "D" => frost::KeyCode::KeyD,
-            "e" | "E" => frost::KeyCode::KeyE,
-            "f" | "F" => frost::KeyCode::KeyF,
-            "g" | "G" => frost::KeyCode::KeyG,
-            "h" | "H" => frost::KeyCode::KeyH,
-            "i" | "I" => frost::KeyCode::KeyI,
-            "j" | "J" => frost::KeyCode::KeyJ,
-            "k" | "K" => frost::KeyCode::KeyK,
-            "l" | "L" => frost::KeyCode::KeyL,
-            "m" | "M" => frost::KeyCode::KeyM,
-            "n" | "N" => frost::KeyCode::KeyN,
-            "o" | "O" => frost::KeyCode::KeyO,
-            "p" | "P" => frost::KeyCode::KeyP,
-            "q" | "Q" => frost::KeyCode::KeyQ,
-            "r" | "R" => frost::KeyCode::KeyR,
-            "s" | "S" => frost::KeyCode::KeyS,
-            "t" | "T" => frost::KeyCode::KeyT,
-            "u" | "U" => frost::KeyCode::KeyU,
-            "v" | "V" => frost::KeyCode::KeyV,
-            "w" | "W" => frost::KeyCode::KeyW,
-            "x" | "X" => frost::KeyCode::KeyX,
-            "y" | "Y" => frost::KeyCode::KeyY,
-            "z" | "Z" => frost::KeyCode::KeyZ,
-            "0" => frost::KeyCode::Digit0,
-            "1" => frost::KeyCode::Digit1,
-            "2" => frost::KeyCode::Digit2,
-            "3" => frost::KeyCode::Digit3,
-            "4" => frost::KeyCode::Digit4,
-            "5" => frost::KeyCode::Digit5,
-            "6" => frost::KeyCode::Digit6,
-            "7" => frost::KeyCode::Digit7,
-            "8" => frost::KeyCode::Digit8,
-            "9" => frost::KeyCode::Digit9,
-            _ => return None,
+    use keyboard_types::{Key, NamedKey};
+    match key {
+        Key::Character(s) => match s.as_str() {
+            "a" | "A" => Some(frost::KeyCode::KeyA),
+            "b" | "B" => Some(frost::KeyCode::KeyB),
+            "c" | "C" => Some(frost::KeyCode::KeyC),
+            "d" | "D" => Some(frost::KeyCode::KeyD),
+            "e" | "E" => Some(frost::KeyCode::KeyE),
+            "f" | "F" => Some(frost::KeyCode::KeyF),
+            "g" | "G" => Some(frost::KeyCode::KeyG),
+            "h" | "H" => Some(frost::KeyCode::KeyH),
+            "i" | "I" => Some(frost::KeyCode::KeyI),
+            "j" | "J" => Some(frost::KeyCode::KeyJ),
+            "k" | "K" => Some(frost::KeyCode::KeyK),
+            "l" | "L" => Some(frost::KeyCode::KeyL),
+            "m" | "M" => Some(frost::KeyCode::KeyM),
+            "n" | "N" => Some(frost::KeyCode::KeyN),
+            "o" | "O" => Some(frost::KeyCode::KeyO),
+            "p" | "P" => Some(frost::KeyCode::KeyP),
+            "q" | "Q" => Some(frost::KeyCode::KeyQ),
+            "r" | "R" => Some(frost::KeyCode::KeyR),
+            "s" | "S" => Some(frost::KeyCode::KeyS),
+            "t" | "T" => Some(frost::KeyCode::KeyT),
+            "u" | "U" => Some(frost::KeyCode::KeyU),
+            "v" | "V" => Some(frost::KeyCode::KeyV),
+            "w" | "W" => Some(frost::KeyCode::KeyW),
+            "x" | "X" => Some(frost::KeyCode::KeyX),
+            "y" | "Y" => Some(frost::KeyCode::KeyY),
+            "z" | "Z" => Some(frost::KeyCode::KeyZ),
+            "0" => Some(frost::KeyCode::Digit0),
+            "1" => Some(frost::KeyCode::Digit1),
+            "2" => Some(frost::KeyCode::Digit2),
+            "3" => Some(frost::KeyCode::Digit3),
+            "4" => Some(frost::KeyCode::Digit4),
+            "5" => Some(frost::KeyCode::Digit5),
+            "6" => Some(frost::KeyCode::Digit6),
+            "7" => Some(frost::KeyCode::Digit7),
+            "8" => Some(frost::KeyCode::Digit8),
+            "9" => Some(frost::KeyCode::Digit9),
+            " " => Some(frost::KeyCode::Space),
+            _ => None,
         },
-        Key::Escape => frost::KeyCode::Escape,
-        Key::Enter => frost::KeyCode::Enter,
-        Key::Space => frost::KeyCode::Space,
-        Key::Tab => frost::KeyCode::Tab,
-        Key::Backspace => frost::KeyCode::Backspace,
-        Key::Delete => frost::KeyCode::Delete,
-        Key::ArrowLeft => frost::KeyCode::ArrowLeft,
-        Key::ArrowRight => frost::KeyCode::ArrowRight,
-        Key::ArrowUp => frost::KeyCode::ArrowUp,
-        Key::ArrowDown => frost::KeyCode::ArrowDown,
-        _ => return None,
-    })
+        Key::Named(named) => Some(match named {
+            NamedKey::Escape => frost::KeyCode::Escape,
+            NamedKey::Enter => frost::KeyCode::Enter,
+            NamedKey::Tab => frost::KeyCode::Tab,
+            NamedKey::Backspace => frost::KeyCode::Backspace,
+            NamedKey::Delete => frost::KeyCode::Delete,
+            NamedKey::ArrowLeft => frost::KeyCode::ArrowLeft,
+            NamedKey::ArrowRight => frost::KeyCode::ArrowRight,
+            NamedKey::ArrowUp => frost::KeyCode::ArrowUp,
+            NamedKey::ArrowDown => frost::KeyCode::ArrowDown,
+            _ => return None,
+        }),
+    }
 }
 
 pub fn map_mouse(button: baseview::MouseButton) -> Option<frost::MouseButton> {

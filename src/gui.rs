@@ -9,12 +9,12 @@
 //! - translate `baseview::Event` → frost input injection (docs/SCENE.md table)
 
 use crate::{TunerParams, TunerSharedState};
-use baseview::{EventStatus, HandlerError, WindowContext, WindowHandler, WindowSettings};
+use baseview::{EventStatus, HandlerError, WindowContext, WindowHandler};
 use frost::embedded::{Embedded, EmbeddedConfig, FrameError};
 use std::cell::RefCell;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::AtomicBool,
 };
 
 /// OFL font shipped with the frost fork; `Arc<[u8]>` for cheap shape sharing.
@@ -30,17 +30,17 @@ pub struct TunerWindow {
     window: WindowContext,
 
     engine: RefCell<Option<TunerEngine>>,
-    /// Stashed inputs while the engine is not yet up (or after a surface loss).
+    /// Kept for upcoming interactive controls (a4 nudge); the readout itself
+    /// flows through the shared atomics, mirrored by the audio thread.
+    #[allow(dead_code)]
     params: Arc<TunerParams>,
     shared: Arc<TunerSharedState>,
     _redraw_requested: Arc<AtomicBool>,
 }
 
 struct TunerEngine {
-    /// Owns the `wgpu::Surface` internally; recreate via `replace_surface`.
+    /// Owns the `wgpu::Surface` internally; resize/loss handled by `Embedded`.
     embedded: Embedded<crate::tuner_ui::TunerUi>,
-    surface_config: wgpu::SurfaceConfiguration,
-    format: wgpu::TextureFormat,
 }
 
 impl TunerWindow {
@@ -77,7 +77,7 @@ impl TunerWindow {
                     ..Default::default()
                 })
                 .await
-                .ok_or_else(|| HandlerError::from_boxed("no wgpu adapter".into()))?;
+                .map_err(|e| HandlerError::from_boxed(format!("{e}").into()))?;
             let (device, queue) = adapter
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("nice-tuner"),
@@ -120,11 +120,7 @@ impl TunerWindow {
             EmbeddedConfig::default(),
         );
 
-        *self.engine.borrow_mut() = Some(TunerEngine {
-            embedded,
-            surface_config,
-            format,
-        });
+        *self.engine.borrow_mut() = Some(TunerEngine { embedded });
         Ok(())
     }
 }
@@ -134,23 +130,19 @@ impl WindowHandler for TunerWindow {
         let mut guard = self.engine.borrow_mut();
         match guard.as_mut() {
             Some(engine) => match engine.embedded.frame() {
-                Ok(()) | Err(FrameError::Skipped) => Ok(()),
-                Err(FrameError::SurfaceLost) => {
-                    // Rebuild the surface from the still-live baseview window.
-                    let instance =
-                        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-                    let fresh = instance
-                        .create_surface(self.window.platform_handle())
-                        .map_err(|e| HandlerError::from_boxed(e.to_string().into()))?;
-                    engine.embedded.replace_surface(fresh, engine.format);
-                    Ok(())
+                // SizeInvalid = zero-sized panel mid-collapse: nothing to
+                // draw, `resize` resumes. Never surface it to baseview — a
+                // HandlerError would tear the window down.
+                Ok(()) | Err(FrameError::SizeInvalid) => Ok(()),
+                // The device is gone: rebuild device+surface+scene wholesale;
+                // the baseview window itself is still alive.
+                Err(FrameError::DeviceLost) | Err(_) => {
+                    drop(guard);
+                    *self.engine.borrow_mut() = None;
+                    self.spawn_engine()
                 }
-                Err(e) => Err(HandlerError::from_boxed(format!("frost frame: {e}").into())),
             },
-            None => {
-                self.spawn_engine()?;
-                Ok(())
-            }
+            None => self.spawn_engine(),
         }
     }
 
@@ -163,13 +155,17 @@ impl WindowHandler for TunerWindow {
             let scale = size.scale_factor;
             match event {
                 B::Keyboard(ke) => {
+                    let down = ke.state == KeyState::Down;
                     if let Some(code) = crate::tuner_ui::map_key(&ke.key) {
-                        engine.embedded.set_key(code, ke.state == KeyState::Down);
+                        engine.embedded.set_key(code, down);
                     }
-                    // text input rides along with key events in baseview
-                    if let Some(text) = &ke.text {
-                        for ch in text.chars() {
-                            engine.embedded.add_text(ch);
+                    // keyboard_types 0.8: typed characters ride in
+                    // `key: Key::Character` on key-down events
+                    if down {
+                        if let keyboard_types::Key::Character(s) = &ke.key {
+                            for ch in s.chars() {
+                                engine.embedded.add_text(ch);
+                            }
                         }
                     }
                     use keyboard_types::Modifiers;
@@ -228,12 +224,12 @@ impl WindowHandler for TunerWindow {
 
         let mut guard = self.engine.borrow_mut();
         if let Some(engine) = guard.as_mut() {
+            // Embedded debounces swap-chain rebuilds internally (settles 100ms
+            // after the last size event; scale changes apply instantly).
             engine.embedded.resize(
                 (new_size.physical.width, new_size.physical.height),
                 new_size.scale_factor,
             );
-            engine.surface_config.width = new_size.physical.width.max(1);
-            engine.surface_config.height = new_size.physical.height.max(1);
         }
         Ok(())
     }

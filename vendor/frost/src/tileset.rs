@@ -200,7 +200,7 @@ fn tileset_of(root: &Val) -> (Option<Tileset>, Vec<String>) {
 
 /// A tileset to file text, header and all. The desk writes these
 /// beside the sheets they cut; a game reads them through
-/// [`from_text`](self::from_text) at the end of a map's reference —
+/// [`from_text`] at the end of a map's reference —
 /// one dialect all the way down the chain.
 #[must_use]
 pub fn to_text(t: &Tileset) -> String {

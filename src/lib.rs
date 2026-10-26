@@ -5,19 +5,18 @@
 //! The triangle placeholder renderer is replaced by the frost-derived
 //! embedded engine in M3/M4 (see docs/VIABILITY.md).
 
-use baseview::{EventStatus, HandlerError, WindowContext, WindowSettings};
+use baseview::{HandlerError, WindowContext, WindowSettings};
 use crossbeam::atomic::AtomicCell;
 use nice_plug::context::gui::GuiContext;
 use nice_plug::editor::dpi::{LogicalSize, NativeSize};
 use nice_plug::editor::{EditorHandle, HostMethods, SpawnedEditor};
 use nice_plug::prelude::*;
-use std::cell::RefCell;
 use std::error::Error;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::{borrow::Cow, sync::atomic::AtomicU64};
+use std::sync::atomic::AtomicU64;
 
 const MIN_SIZE: LogicalSize<f32> = LogicalSize::new(480.0, 320.0);
 const DEFAULT_SIZE: LogicalSize<f32> = LogicalSize::new(640.0, 400.0);
@@ -86,280 +85,10 @@ impl TunerSharedState {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// The embedded window (baseview handler)
-
-struct Surface {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    pipeline: wgpu::RenderPipeline,
-    surface: wgpu::Surface<'static>,
-    surface_config: wgpu::SurfaceConfiguration,
-}
-
-pub struct TunerWindow {
-    _gui_context: GuiContext,
-    window: WindowContext,
-
-    surface: RefCell<Surface>,
-
-    #[allow(unused)]
-    params: Arc<TunerParams>,
-    shared: Arc<TunerSharedState>,
-    redraw_requested: Arc<AtomicBool>,
-}
-
-impl TunerWindow {
-    fn new(
-        window: WindowContext,
-        gui_context: GuiContext,
-        params: Arc<TunerParams>,
-        shared: Arc<TunerSharedState>,
-        redraw: Arc<AtomicBool>,
-    ) -> Result<Self, HandlerError> {
-        pollster::block_on(Self::create(
-            window,
-            gui_context,
-            params,
-            shared,
-            redraw,
-        ))
-    }
-
-    async fn create(
-        window: WindowContext,
-        gui_context: GuiContext,
-        params: Arc<TunerParams>,
-        shared: Arc<TunerSharedState>,
-        redraw: Arc<AtomicBool>,
-    ) -> Result<Self, HandlerError> {
-        let size = window.size();
-
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-
-        let surface = instance.create_surface(window.platform_handle())?;
-
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
-                force_fallback_adapter: false,
-                // Request an adapter which can render to our surface
-                compatible_surface: Some(&surface),
-                ..Default::default()
-            })
-            .await?;
-
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                    .using_resolution(adapter.limits()),
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
-                ..Default::default()
-            })
-            .await?;
-
-        // M1 placeholder: a triangle. Replaced by the frost scene in M4.
-        const SHADER: &str = "
-            const VERTS = array(
-                vec2<f32>(0.5, 1.0),
-                vec2<f32>(0.0, 0.0),
-                vec2<f32>(1.0, 0.0)
-            );
-
-            struct VertexOutput {
-                @builtin(position) clip_position: vec4<f32>,
-                @location(0) position: vec2<f32>,
-            };
-
-            @vertex
-            fn vs_main(
-                @builtin(vertex_index) in_vertex_index: u32,
-            ) -> VertexOutput {
-                var out: VertexOutput;
-                out.position = VERTS[in_vertex_index];
-                out.clip_position = vec4<f32>(out.position - 0.5, 0.0, 1.0);
-                return out;
-            }
-
-            @fragment
-            fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-                return vec4<f32>(in.position, 0.5, 1.0);
-            }
-            ";
-
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SHADER)),
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[],
-            immediate_size: 0,
-        });
-
-        let swapchain_capabilities = surface.get_capabilities(&adapter);
-        let swapchain_format = swapchain_capabilities.formats[0];
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(swapchain_format.into())],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let mut surface_config = surface
-            .get_default_config(&adapter, size.physical.width, size.physical.height)
-            .unwrap(); // TODO: handle None
-
-        // IMPORTANT! Plugins should not use vsync as it blocks the host's main thread.
-        surface_config.present_mode = wgpu::PresentMode::AutoNoVsync;
-
-        surface.configure(&device, &surface_config);
-
-        Ok(Self {
-            _gui_context: gui_context,
-            window,
-            surface: RefCell::new(Surface {
-                device,
-                queue,
-                pipeline,
-                surface,
-                surface_config,
-            }),
-            params,
-            shared,
-            redraw_requested: redraw,
-        })
-    }
-
-    fn configure_surface(&self, width: u32, height: u32) {
-        let mut surface = self.surface.borrow_mut();
-        surface.surface_config.width = width;
-        surface.surface_config.height = height;
-        surface
-            .surface
-            .configure(&surface.device, &surface.surface_config);
-    }
-}
-
-impl baseview::WindowHandler for TunerWindow {
-    fn on_frame(&self) -> Result<(), HandlerError> {
-        if !self.redraw_requested.swap(false, Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        let mut surface = self.surface.borrow_mut();
-        let Surface {
-            device,
-            queue,
-            pipeline,
-            surface,
-            surface_config,
-        } = &mut *surface;
-
-        let mut recreate_surface = false;
-        let frame = match surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture) => Some(texture),
-            wgpu::CurrentSurfaceTexture::Occluded | wgpu::CurrentSurfaceTexture::Timeout => {
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Suboptimal(_) | wgpu::CurrentSurfaceTexture::Outdated => {
-                None
-            }
-            wgpu::CurrentSurfaceTexture::Validation => {
-                unreachable!("No error scope registered, so validation errors will panic")
-            }
-            wgpu::CurrentSurfaceTexture::Lost => {
-                recreate_surface = true;
-                None
-            }
-        };
-
-        let Some(frame) = frame else {
-            if recreate_surface {
-                let instance =
-                    wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-
-                *surface = instance
-                    .create_surface(self.window.platform_handle())
-                    .unwrap();
-            }
-
-            surface.configure(device, surface_config);
-            return Ok(());
-        };
-
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            rpass.set_pipeline(pipeline);
-            rpass.draw(0..3, 0..1);
-        }
-
-        queue.submit(Some(encoder.finish()));
-        queue.present(frame);
-
-        Ok(())
-    }
-
-    fn on_event(&self, event: baseview::Event) -> EventStatus {
-        if let baseview::Event::Window(baseview::WindowEvent::Focused) = &event {
-            self.redraw_requested.store(true, Ordering::Relaxed);
-        }
-
-        baseview::EventStatus::Captured
-    }
-
-    fn resized(&self, new_size: baseview::WindowSize) -> Result<(), HandlerError> {
-        self.shared.scale_factor.store(new_size.scale_factor);
-        self.shared.logical_size.store(new_size.logical.cast());
-
-        self.configure_surface(new_size.physical.width, new_size.physical.height);
-
-        self.redraw_requested.store(true, Ordering::Relaxed);
-
-        Ok(())
-    }
-}
+// The embedded window: frost renderer hosted by baseview (src/gui.rs),
+// tuner scene + UI logic in src/tuner_ui.rs.
+mod gui;
+mod tuner_ui;
 
 // ---------------------------------------------------------------------------------------------------
 // Editor + handle (nice-plug integration)
@@ -435,8 +164,8 @@ impl Editor for TunerEditor {
                 .with_parent(parent.as_ref())
                 .with_wait_for_parent(wait_for_parent)
                 .with_fallback_scale_factor(fallback_scale_factor),
-            move |window: WindowContext| -> Result<TunerWindow, HandlerError> {
-                TunerWindow::new(window, gui_context, params, shared, redraw_requested_2)
+            move |window: WindowContext| -> Result<gui::TunerWindow, HandlerError> {
+                gui::TunerWindow::new(window, gui_context, params, shared, redraw_requested_2)
             },
             host,
         )?;

@@ -176,8 +176,8 @@ impl Ui {
     /// that runs out of room to their right is cut to a `...`-led tail —
     /// a note's end is its point, so the tail is what survives — and the
     /// earlier notes fall off the left first. They are paint only —
-    /// clicks there belong to the bar's strip, not to any item. See the
-    /// [module](self) for the behavior.
+    /// clicks there belong to the bar's strip, not to any item. The
+    /// module documentation describes the behavior.
     pub fn menu_bar<'a>(
         &mut self,
         ctx: &mut Context,

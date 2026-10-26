@@ -3,15 +3,6 @@ name = "frost"
 version = "0.1.0"
 edition = "2024"
 
-# A standalone package: an embeddable 2D wgpu renderer for host
-# applications (see `frost::embedded`). The `[workspace]` table with no
-# members roots the package in its own workspace so a parent crate's
-# workspace can never absorb it — the vendored copy builds and checks
-# exactly as it sits here. The engine's own tools, examples, and web
-# target left with the embedding refactor: the host owns the window, the
-# event loop, the GPU device, and the presentation cadence.
-[workspace]
-# Edition 2024 implies resolver 3; stated explicitly so the resolver
 # cannot drift from the package's edition.
 resolver = "3"
 

@@ -23,7 +23,7 @@ use wgpu::{
     TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton};
+use winit::event::MouseButton;
 
 use crate::backend::bloom::Bloom;
 use crate::backend::copy::pad_rows;

@@ -1458,7 +1458,7 @@ pub struct SceneNode {
     /// shadows it — to light the surroundings as well, attach a
     /// [`Shape::Light`] child node. Spill is **bloom**, an effect of the
     /// renderer over bright pixels rather than a property of a node: where
-    /// the app asks for it ([`Config::bloom`](crate::Config::bloom)) it is
+    /// the app asks for it ([`EmbeddedConfig::bloom`](crate::embedded::EmbeddedConfig::bloom)) it is
     /// this field's brightness, blurred at four widths and added back over
     /// the frame.
     ///
@@ -1470,7 +1470,7 @@ pub struct SceneNode {
     /// handing some of its light to the pixels around it — so a lamp meant to
     /// light a room is written past 1.0 and one meant merely to be seen is
     /// not. With bloom off, a value past 1.0 still reaches the screen as
-    /// plain white; [`tone_map`](crate::Config::tone_map) is what would say
+    /// plain white; [`tone_map`](crate::embedded::EmbeddedConfig::tone_map) is what would say
     /// otherwise.
     ///
     /// The default — black — is off.
@@ -1676,7 +1676,7 @@ pub struct NodePath {
 /// A tree of [`SceneNode`]s rooted at a single node, plus zero or more
 /// rendering [`Layer`]s.
 ///
-/// Pass a scene to [`run`](crate::run): every frame the user's
+/// Hand a scene to an [`Embedded`](crate::embedded::Embedded): every frame the user's
 /// [`Process`](crate::Process) runs, then the tree is updated with
 /// [`Scene::visit`] (every node's [`Node::process`], children before their
 /// parent, on the root tree and on every layer's tree), and only then is

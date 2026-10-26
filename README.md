@@ -17,7 +17,9 @@ and [docs/SCENE.md](docs/SCENE.md) for the UI design.
 ## Layout
 
 ```
-src/lib.rs        plugin: TunerPlugin (params, process), TunerEditor/Window (baseview)
+src/lib.rs        plugin: TunerPlugin (params, process), TunerEditor (baseview spawn)
+src/gui.rs        baseview WindowHandler driving `frost::embedded::Embedded` (surface, inputs)
+src/tuner_ui.rs   frost scene: gauge, needle, note readout, input meter (`Process` impl)
 src/main.rs       standalone target (`--features standalone`)
 crates/pitch      pure-Rust YIN pitch detector (unit-tested, no deps)
 vendor/frost      frost fork: embedded wgpu renderer, no event loop, no rodio
@@ -34,7 +36,7 @@ cargo run --features standalone      # standalone app for testing without a DAW
 ### Producing plugin binaries
 
 ```sh
-cargo xtask bundle nice-tuner --release   # → dist/  (*.clap, *.vst3 bundles on macOS)
+cargo xtask bundle nice-tuner --release   # → target/bundled/  (Nice Tuner.clap / .vst3 on macOS)
 ```
 
 This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
@@ -61,8 +63,9 @@ This uses `nice-plug-xtask` (wired up as the `xtask` workspace member with
 ## Status
 
 - [x] M1 plugin skeleton (baseview window, wgpu surface, host adapters)
-- [x] M2 pitch detector (`crates/pitch`) — 10/10 tests green
-- [ ] M3 frost embedded engine (`frost::embedded::Embedded`)
-- [ ] M4 baseview→frost adapter + tuner scene
-- [ ] M5 DSP→GUI wiring (gated on editor open)
-- [ ] M6 full build + docs
+- [x] M2 pitch detector (`crates/pitch`) — 17/17 tests green
+- [x] M3 frost embedded engine (`frost::embedded::Embedded`) — 313 fork tests green,
+      winit event loop grep-gated out
+- [x] M4 baseview→frost adapter (`src/gui.rs`) + tuner scene (`src/tuner_ui.rs`)
+- [x] M5 DSP→GUI wiring (analysis gated on editor open; shared atomics, zero RT allocs)
+- [x] M6 `scripts/check.sh` all gates green, incl. `Nice Tuner.clap`/`.vst3` bundling
