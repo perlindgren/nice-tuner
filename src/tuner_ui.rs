@@ -28,12 +28,13 @@ const CENTS_PX: f32 = 4.8;
 /// Half-width of the gauge, in fit units (50 ¢ × CENTS_PX).
 const GAUGE_HALF: f32 = 50.0 * CENTS_PX;
 /// Curvature knee of the gauge scale, in cents.
-const GAUGE_KNEE_CENTS: f32 = 10.0;
-/// Gauge mapping: sign-preserving asinh with a ±10 ¢ knee — near-linear
+const GAUGE_KNEE_CENTS: f32 = 5.0;
+/// Gauge mapping: sign-preserving asinh with a ±5 ¢ knee — near-linear
 /// and readable inside a few cents, progressively compressing beyond it.
-/// The middle gets ~2.1× the room (the ±3 ¢ verdict spans ~61 of 480
-/// units, was 29), edges still reach ±50 ¢. asinh over a power curve:
-/// finite slope at 0, so needle jitter near perfect pitch stays calm.
+/// The middle gets ~3.2× the room (the ±3 ¢ verdict spans ~91 of 480
+/// units, was 29 linear), edges still reach ±50 ¢. asinh over a power
+/// curve: finite slope at 0, so needle jitter near perfect pitch stays
+/// calm even at this steepness (16 units/¢ at center, not infinite).
 fn cents_to_units(cents: f32) -> f32 {
     let c = cents.clamp(-50.0, 50.0) / GAUGE_KNEE_CENTS;
     GAUGE_HALF * c.asinh() / (50.0 / GAUGE_KNEE_CENTS).asinh()
@@ -1086,10 +1087,10 @@ mod tests {
             prev = x;
             c += 0.5;
         }
-        // The point of it all: the ±3 ¢ verdict zone is ≥ 2× the linear
-        // span (was 14.4 units at 4.8 px/¢), and the 10 ¢ mark still
-        // sits in the first quarter of the gauge, not past its middle.
-        assert!(cents_to_units(3.0) >= 28.8, "mid gains too little room");
+        // The point of it all: the ±3 ¢ verdict zone is ≥ 3× the linear
+        // span (was 14.4 units at 4.8 px/¢; knee-5 asinh gives ~45.5),
+        // and the 10 ¢ mark still sits before the gauge's midpoint.
+        assert!(cents_to_units(3.0) >= 44.0, "mid gains too little room");
         assert!(cents_to_units(10.0) < 120.0, "edges compress too weakly");
         // Beyond-range input (EMA overshoot) cannot escape the gauge
         // (epsilon: the mapping is (HALF·a)/a at the clamped edge).
