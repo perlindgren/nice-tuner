@@ -428,12 +428,14 @@ impl Process for TunerUi {
             format!("{}{}", self.latch_name, self.latch_oct)
         };
         ctx.text(0.0, 95.0 * fit, font, label, 86.4 * fit, 700.0, main, 0.2);
-        // cents readout (one decimal, sign fixed for stable layout)
-        // No signal, no reading: a bare dash, not a confident "+0.0¢".
+        // cents readout: TABULAR — monospaced glyphs × a constant glyph
+        // budget ("−09.9¢", never "−9.9¢") means the centered ink box has
+        // the same width for every value: digits and the dot never move.
+        // No signal, no reading: a bare dash, not a confident "+00.0¢".
         let cents_s = if signal {
             let cents = self.cents_shown;
             format!(
-                "{}{:.1}¢",
+                "{}{:04.1}¢",
                 if cents >= 0.0 { "+" } else { "−" },
                 cents.abs()
             )
@@ -450,11 +452,14 @@ impl Process for TunerUi {
             main,
             0.2,
         );
-        // frequency + reference
+        // frequency + reference — same tabular rule: always exactly six
+        // glyphs before " Hz" (zero-padded width incl. the dot), and the
+        // idle bar spans the same six, so even the "· A4=" tail cannot
+        // shift.
         let freq_s = if signal {
-            format!("{:.1} Hz  ·  A4={:.0}", self.freq_shown, a4)
+            format!("{:06.1} Hz  ·  A4={:.0}", self.freq_shown, a4)
         } else {
-            format!("———  ·  A4={:.0}", a4)
+            format!("——————  ·  A4={:.0}", a4)
         };
         ctx.text(0.0, -104.0 * fit, font, freq_s, 39.6 * fit, 550.0, DIM, 0.2);
         // ---- input meter with a real dBFS scale ----------------------------
