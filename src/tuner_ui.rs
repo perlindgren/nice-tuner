@@ -357,7 +357,7 @@ impl Process for TunerUi {
         );
         // note label
         let label = format!("{}{}", self.latch_name, self.latch_oct);
-        ctx.text(0.0, 110.0 * fit, font, label, 172.8 * fit, 700.0, main, 0.2);
+        ctx.text(0.0, 95.0 * fit, font, label, 86.4 * fit, 700.0, main, 0.2);
         // cents readout (one decimal, sign fixed for stable layout)
         let cents = if signal { self.cents_shown } else { 0.0 };
         let cents_s = format!(
