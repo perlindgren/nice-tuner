@@ -1448,14 +1448,40 @@ fn expand_text_list(
                 // scale, so it stays a constant number of panel pixels.
                 let [sx, sy] = world.compose(&user_to_pixel).scales();
                 let aa = AA_BAND / sx.max(sy).max(1e-9);
-                // Center the text block (width by ascent + descent, baseline
-                // at the pen-space origin, y up) on the node's origin. The
-                // metrics come back in raster pixels; every one below is
-                // divided by the scale factor back into the text's units.
-                let origin = [
-                    -layout.width * inv_scale / 2.0,
-                    (layout.ascent - layout.descent) * inv_scale / 2.0,
-                ];
+                // Center the text block's actual INK on the node's origin.
+                // The metrics box (ascent + descent) centers the em, but
+                // digits and capitals ink above the baseline, so em-box
+                // centering visibly floats text inside UI bands — and by a
+                // fraction of the size, so it grows with larger type. The
+                // glyphs are all rasterized into the atlas at this point,
+                // so the ink rectangle is measured exactly, in the same
+                // pen-space (baseline origin, y up, raster pixels) the
+                // per-glyph placement below uses.
+                let mut ink: Option<(f32, f32, f32, f32)> = None; // l, b, r, t
+                for glyph in &layout.glyphs {
+                    let Some(cell) = atlas.cell(glyph.id) else {
+                        continue;
+                    };
+                    let (gw, gh) = (cell.width as f32, cell.height as f32);
+                    // Advancing space: no coverage, no ink.
+                    if gw == 0.0 || gh == 0.0 {
+                        continue;
+                    }
+                    let l = glyph.x + cell.left as f32;
+                    let t = glyph.y + cell.top as f32;
+                    let (r, b) = (l + gw, t - gh);
+                    ink = Some(match ink {
+                        Some((l0, b0, r0, t0)) => (l0.min(l), b0.min(b), r0.max(r), t0.max(t)),
+                        None => (l, b, r, t),
+                    });
+                }
+                // Fall back to the metrics box only for strings with no
+                // ink at all (all-space text draws nothing anyway).
+                let origin_px = match ink {
+                    Some((l, b, r, t)) => [-(l + r) / 2.0, -(b + t) / 2.0],
+                    None => [-layout.width / 2.0, (layout.ascent - layout.descent) / 2.0],
+                };
+                let origin = [origin_px[0] * inv_scale, origin_px[1] * inv_scale];
                 let (atlas_w, atlas_h) = (atlas.width as f32, atlas.height as f32);
                 for glyph in &layout.glyphs {
                     let Some(cell) = atlas.cell(glyph.id) else {
