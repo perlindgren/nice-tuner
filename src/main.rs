@@ -38,9 +38,11 @@ fn main() {
     // control panel's number), not nice-plug's hard-coded 48 kHz. Resolve
     // it once here; an explicit file value or -r/--sample-rate still wins
     // (effective_args applies CLI-over-file precedence as usual).
-    // The answer is WRITTEN BACK: this boot's rate is then known to the
-    // settings page even when a later ASIO query lands blind — queried
-    // once, remembered, not re-guessed.
+    // The answer is WRITTEN BACK — but only when a file ALREADY exists:
+    // a configured install remembers its rate, while a cold start stays
+    // a clean slate (the settings page shows unset rows as dashes until
+    // the user has actually chosen anything).
+    let warm = Settings::exists();
     let mut settings = settings;
     if settings.sample_rate.is_none()
         && let Some(rate) = nice_tuner::devices::driver_default_rate(
@@ -50,7 +52,7 @@ fn main() {
         )
     {
         settings.sample_rate = Some(rate);
-        if let Err(e) = settings.save() {
+        if warm && let Err(e) = settings.save() {
             eprintln!("nice-tuner: could not remember driver rate: {e}");
         }
     }

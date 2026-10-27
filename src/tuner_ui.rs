@@ -109,7 +109,13 @@ pub struct TunerUi {
     /// The settings exactly as last SAVED — boot file, APPLY, or RESET.
     /// APPLY is clickable only while the draft differs from this:
     /// when there is nothing to write, there is nothing to press.
+    /// when there is nothing to write, there is nothing to press.
     saved: Settings,
+    /// True when NO settings file existed at startup: a cold start is
+    /// shown as a clean slate — every unset audio row a dash, nothing
+    /// narrated. Applies to the whole session (choosing values lights
+    /// those rows; APPLY ends coldness for good, next boot is warm).
+    cold: bool,
     settings_loaded: bool,
     devices_loaded: bool,
     open_dropdown: Option<Dropdown>,
@@ -176,6 +182,7 @@ impl TunerUi {
             esc_held: false,
             applied: Settings::default(),
             saved: Settings::default(),
+            cold: false,
             settings_loaded: false,
             devices_loaded: false,
             open_dropdown: None,
@@ -282,6 +289,7 @@ impl Process for TunerUi {
         // consumes them; audio settings stay standalone-only by design.
         if !self.settings_loaded {
             let (settings, _) = Settings::load();
+            self.cold = !Settings::exists();
             self.applied = settings.clone();
             self.saved = settings.clone();
             self.settings = settings;
@@ -1223,12 +1231,17 @@ impl TunerUi {
                     .map(|(_, l)| l.clone())
                     .unwrap_or_else(|| id.to_owned()),
             },
-            Dropdown::Rate => self
-                .settings
-                .sample_rate
-                .map(fmt_rate)
-                .or_else(|| self.default_label(Dropdown::Rate))
-                .unwrap_or_else(|| "\u{2014}".into()),
+            Dropdown::Rate => match self.settings.sample_rate {
+                Some(r) => fmt_rate(r),
+                // Cold start: nothing chosen, nothing narrated. Warm
+                // and unset: "follow the driver" IS the state — show
+                // the number (queried or remembered), starred.
+                None if self.cold => "\u{2014}".into(),
+                None => self
+                    .driver_rate_known()
+                    .map(fmt_rate)
+                    .unwrap_or_else(|| "\u{2014}".into()),
+            },
             Dropdown::Buffer => match self.settings.period_size {
                 // Same rule as Backend: unset is unset — the dropdown's
                 // starred row names the value that follows (the live
@@ -1236,23 +1249,42 @@ impl TunerUi {
                 None => "\u{2014}".to_string(),
                 Some(p) => p.to_string(),
             },
+            // Devices follow the same cold rule: on a fresh install the
+            // panel does not announce the system default before the
+            // user has shown any interest in devices at all. Warm and
+            // unset, "follow the system default" is the state — name it.
             Dropdown::Input => self
                 .settings
                 .input_device
                 .clone()
-                .or_else(|| self.default_in.clone())
+                .or_else(|| {
+                    if self.cold {
+                        None
+                    } else {
+                        self.default_in.clone()
+                    }
+                })
                 .map(|d| clip(&d, 26))
                 .unwrap_or_else(|| "\u{2014}".into()),
             Dropdown::Output => self
                 .settings
                 .output_device
                 .clone()
-                .or_else(|| self.default_out.clone())
+                .or_else(|| {
+                    if self.cold {
+                        None
+                    } else {
+                        self.default_out.clone()
+                    }
+                })
                 .map(|d| clip(&d, 26))
                 .unwrap_or_else(|| "\u{2014}".into()),
-            Dropdown::InputCh => match self.shared.input_channel.load() {
-                0 => "auto (loudest)".to_string(),
-                n => format!("channel {n}"),
+            Dropdown::InputCh => match (self.cold, self.settings.input_channel) {
+                (true, None) => "\u{2014}".to_string(),
+                _ => match self.shared.input_channel.load() {
+                    0 => "auto (loudest)".to_string(),
+                    n => format!("channel {n}"),
+                },
             },
             Dropdown::A4 => format!("{:.1} Hz", self.shared.a4_ref()),
             Dropdown::Gate => format!("{:.0} dB", self.shared.gate_db.load()),

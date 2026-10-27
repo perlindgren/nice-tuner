@@ -86,6 +86,13 @@ impl Settings {
             .join(FILE_NAME)
     }
 
+    /// Whether a settings FILE exists at all — distinct from "settings
+    /// have values". The panel reads this at startup: a cold start (no
+    /// file) shows unset audio rows as dashes, not narrated resolutions.
+    pub fn exists() -> bool {
+        Self::path().exists()
+    }
+
     /// A missing file is the default; a corrupt file is the default plus a
     /// warning to show. Startup must never depend on a file that can rot.
     pub fn load() -> (Settings, Option<String>) {
