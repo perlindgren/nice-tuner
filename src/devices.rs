@@ -301,12 +301,47 @@ pub struct Snapshot {
     pub rates: Vec<f32>,
     pub buffers: Vec<u32>,
     pub driver_rate: Option<f32>,
+    /// The device's OWN preferred buffer size (ASIOGetBufferSize's
+    /// `pref` — the manufacturer panel's number). cpal discards it;
+    /// the streamless child asks asio-sys directly.
+    pub buffer_pref: Option<u32>,
+}
+
+/// The driver's preferred buffer size for an ASIO device, by direct
+/// asio-sys call. Runs where cpal has just finished loading and
+/// releasing its driver handles (the child), so the brief second load
+/// cannot collide with anything. Everywhere else — and on any failure,
+/// including this process merely streaming (`DriverAlreadyExists`) —
+/// honestly None.
+#[cfg(all(windows, feature = "asio-host"))]
+fn asio_buffer_pref(name: &str) -> Option<u32> {
+    use asio_sys::bindings::BufferPreference;
+    let driver = asio_sys::Asio::new().load_driver(name).ok()?;
+    let pref = driver.buffersize_range().ok()?.preferred;
+    let n = match pref {
+        BufferPreference::Only(n) | BufferPreference::Preferred(n) => n,
+        BufferPreference::Stepped { preferred, .. } => preferred,
+    };
+    (n > 0).then_some(n)
+}
+
+#[cfg(not(all(windows, feature = "asio-host")))]
+fn asio_buffer_pref(_name: &str) -> Option<u32> {
+    None
 }
 
 /// In-process snapshot: every enumeration call, once.
 pub fn snapshot(backend: &str, input: Option<&str>, output: Option<&str>) -> Snapshot {
     let (def_in, def_out) = default_device_names(backend);
     let (rates, buffers) = stream_options(backend, input, output);
+    let driver_rate = driver_default_rate(backend, input, output);
+    // Preferred buffer: a property of the input device (the one whose
+    // clock runs the show), or of whatever the default input is.
+    let buffer_pref = (backend == "asio")
+        .then(|| input.map(str::to_owned).or_else(|| def_in.clone()))
+        .flatten()
+        .as_deref()
+        .and_then(asio_buffer_pref);
     Snapshot {
         inputs: list_input_devices(backend),
         outputs: list_output_devices(backend),
@@ -314,7 +349,8 @@ pub fn snapshot(backend: &str, input: Option<&str>, output: Option<&str>) -> Sna
         def_out,
         rates,
         buffers,
-        driver_rate: driver_default_rate(backend, input, output),
+        driver_rate,
+        buffer_pref,
     }
 }
 

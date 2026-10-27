@@ -31,7 +31,7 @@ standalone = ["nice-plug/standalone", "dep:cpal", "dep:windows-sys", "dep:raw-wi
 standalone-asio = ["standalone", "nice-plug/standalone-asio", "asio-host"]
 # cfg-visible alias for cpal/asio (cfg cannot test "cpal/asio" directly);
 # drives the ASIO arms in src/devices.rs.
-asio-host = ["cpal/asio"]
+asio-host = ["cpal/asio", "dep:asio-sys"]
 
 [dependencies]
 nice-plug = { version = "0.4.2", default-features = false, features = [
@@ -77,6 +77,10 @@ windows-sys = { version = "0.52", optional = true, features = [
 # baseview 0.3.3 speaks raw-window-handle 0.6; same version required to
 # read its PlatformHandle's HWND.
 raw-window-handle = { version = "0.6", optional = true }
+# Direct ASIO access (same version cpal 0.18 pins): reading a driver's
+# PREFERRED buffer size — which cpal discards — in the streamless child
+# (--list-devices). Sequential with cpal's use; never concurrent.
+asio-sys = { version = "0.4", optional = true }
 
 [workspace]
 members = ["xtask", "crates/pitch", "vendor/frost"]

@@ -788,6 +788,9 @@ impl TunerUi {
                     if s.driver_rate.is_none() {
                         s.driver_rate = p.driver_rate;
                     }
+                    if s.buffer_pref.is_none() {
+                        s.buffer_pref = p.buffer_pref;
+                    }
                     Some(s)
                 }
                 None => Some(in_proc()),
@@ -821,6 +824,44 @@ impl TunerUi {
             && !self.rate_opts.contains(&fmt_rate(r))
         {
             self.rate_opts.insert(0, fmt_rate(r));
+        }
+    }
+
+    /// COLD CASCADE — choosing a BACKEND adopts that whole world: the
+    /// input and output devices fall to their system defaults, then
+    /// the stream values are QUERIED for the adopted device and set
+    /// to its defaults (the rate the driver runs at; the buffer the
+    /// driver prefers — where such defaults are knowable at all).
+    /// One human decision, spelled out fully on the page; APPLY only
+    /// has to persist it. Warm sessions never adopt: there "follow
+    /// the default" is the state, and states are not overwritten.
+    #[cfg(feature = "standalone")]
+    fn adopt_cold_backend(&mut self) {
+        if !self.cold {
+            return;
+        }
+        self.settings.input_device.clone_from(&self.default_in);
+        self.settings.output_device.clone_from(&self.default_out);
+        // The adopted devices are new stream truth: re-read with them
+        // in hand, then adopt the device's stream defaults too.
+        self.take_snapshot();
+        self.apply_stream_snap();
+        self.adopt_cold_stream();
+    }
+
+    /// COLD CASCADE — the devices changed (adopted with a backend, or
+    /// overridden by hand): buffer and sample rate follow the NOW
+    /// selected device's queried defaults, whenever one is known.
+    #[cfg(feature = "standalone")]
+    fn adopt_cold_stream(&mut self) {
+        if !self.cold {
+            return;
+        }
+        if let Some(r) = self.driver_rate_known() {
+            self.settings.sample_rate = Some(r);
+        }
+        if let Some(b) = self.snap.as_ref().and_then(|s| s.buffer_pref) {
+            self.settings.period_size = Some(b);
         }
     }
 
@@ -1097,6 +1138,8 @@ impl TunerUi {
             Dropdown::Backend => {
                 self.settings.backend = if raw == "auto" { None } else { Some(raw) };
                 self.refresh_devices();
+                #[cfg(feature = "standalone")]
+                self.adopt_cold_backend();
             }
             Dropdown::Input => {
                 self.settings.input_device = if at_default { None } else { Some(raw) };
@@ -1105,12 +1148,16 @@ impl TunerUi {
                 // mismatched output would silently be another driver.
                 self.settings.output_device = self.settings.input_device.clone();
                 self.refresh_stream_options();
+                #[cfg(feature = "standalone")]
+                self.adopt_cold_stream();
             }
             Dropdown::Output => {
                 self.settings.output_device = if at_default { None } else { Some(raw) };
                 // Duplex constraint: the output device narrows the buffer
                 // range too — recompute.
                 self.refresh_stream_options();
+                #[cfg(feature = "standalone")]
+                self.adopt_cold_stream();
             }
             Dropdown::Rate => {
                 self.settings.sample_rate = if at_default { None } else { raw.parse().ok() };
