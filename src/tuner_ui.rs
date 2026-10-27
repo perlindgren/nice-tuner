@@ -289,7 +289,9 @@ impl Process for TunerUi {
         // consumes them; audio settings stay standalone-only by design.
         if !self.settings_loaded {
             let (settings, _) = Settings::load();
-            self.cold = !Settings::exists();
+            // Cold: no file, or a file that holds no decision (a bare
+            // geometry written by window moves does not count).
+            self.cold = !Settings::exists() || settings.is_blank();
             self.applied = settings.clone();
             self.saved = settings.clone();
             self.settings = settings;

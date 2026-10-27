@@ -93,6 +93,24 @@ impl Settings {
         Self::path().exists()
     }
 
+    /// True when the file holds nothing a user could be said to have
+    /// chosen: every setting absent. Window geometry does NOT count —
+    /// it is written by moving a window, not by making a decision.
+    /// A blank file means a cold start, however the file got there.
+    pub fn is_blank(&self) -> bool {
+        self.backend.is_none()
+            && self.input_device.is_none()
+            && self.output_device.is_none()
+            && self.sample_rate.is_none()
+            && self.period_size.is_none()
+            && self.input_latency.is_none()
+            && self.a4_ref.is_none()
+            && self.gate_db.is_none()
+            && self.input_channel.is_none()
+            && self.in_tune_cents.is_none()
+            && self.gauge_knee_cents.is_none()
+    }
+
     /// A missing file is the default; a corrupt file is the default plus a
     /// warning to show. Startup must never depend on a file that can rot.
     pub fn load() -> (Settings, Option<String>) {
@@ -225,6 +243,34 @@ mod tests {
                 height: 500.0
             })
         );
+    }
+
+    #[test]
+    fn blank_means_no_decision_geometry_never_counts() {
+        // A file born from merely moving the window holds no decision:
+        // still a cold slate.
+        let geom_only = Settings {
+            window: Some(WindowGeom {
+                x: Some(10),
+                y: Some(20),
+                width: 800.0,
+                height: 500.0,
+            }),
+            ..Default::default()
+        };
+        assert!(geom_only.is_blank());
+        assert!(Settings::default().is_blank());
+        // One value of any class and the slate is no longer blank.
+        let one_choice = Settings {
+            period_size: Some(512),
+            ..Default::default()
+        };
+        assert!(!one_choice.is_blank());
+        let look_only = Settings {
+            in_tune_cents: Some(3.0),
+            ..Default::default()
+        };
+        assert!(!look_only.is_blank());
     }
 
     #[test]

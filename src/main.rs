@@ -42,7 +42,11 @@ fn main() {
     // a configured install remembers its rate, while a cold start stays
     // a clean slate (the settings page shows unset rows as dashes until
     // the user has actually chosen anything).
-    let warm = Settings::exists();
+    // Warm = a file AND a decision inside it: a file carrying nothing
+    // but window geometry (written by merely moving the window) is
+    // still a cold slate, and a cold slate stays untouched until the
+    // user chooses something.
+    let warm = Settings::exists() && !settings.is_blank();
     let mut settings = settings;
     if settings.sample_rate.is_none()
         && let Some(rate) = nice_tuner::devices::driver_default_rate(

@@ -236,6 +236,16 @@ impl TunerWindow {
     #[cfg(all(windows, feature = "standalone"))]
     fn persist_geom(&self) {
         use crate::settings::{Settings, WindowGeom};
+        // COLD RULE: while no settings file exists, NOTHING here
+        // writes one. Without this guard, a plain window move 2 s
+        // after a cold start materialised the file in the background —
+        // the settings page's cold dashes were undone at the very next
+        // boot (warm by an accident nobody chose), and every run
+        // renewed the accident. A file is born only when the user
+        // chooses: APPLY or RESET.
+        if !Settings::exists() {
+            return;
+        }
         let Some((x, y, width, height)) = self.geom_seen.get() else {
             return;
         };
