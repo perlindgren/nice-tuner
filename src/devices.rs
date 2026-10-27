@@ -122,6 +122,17 @@ pub fn list_output_devices(backend: &str) -> Vec<String> {
 /// name what "(default)" actually is — a dropdown row saying the word is
 /// a row saying nothing.
 pub fn default_device_names(backend: &str) -> (Option<String>, Option<String>) {
+    if backend == "asio" {
+        // ASIO has no system default: cpal nominates the FIRST driver.
+        // Refine that to the first driver that can actually serve the
+        // direction — an output-only driver must never be nominated
+        // as the tuner's input. (list_*_devices already filters by
+        // channel capability, in registry order.)
+        return (
+            list_input_devices(backend).into_iter().next(),
+            list_output_devices(backend).into_iter().next(),
+        );
+    }
     let host = if backend == "auto" || backend.is_empty() {
         cpal::default_host()
     } else {

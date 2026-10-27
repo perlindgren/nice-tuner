@@ -840,8 +840,24 @@ impl TunerUi {
         if !self.cold {
             return;
         }
+        // Devices fall to the probed defaults — for ASIO the first
+        // driver with at least one input channel (devices.rs filters
+        // the nomination by capability, registry order).
         self.settings.input_device.clone_from(&self.default_in);
-        self.settings.output_device.clone_from(&self.default_out);
+        self.settings.output_device = if self.backend_key() == "asio" {
+            // One ASIO driver per process is not policy but asio-sys
+            // law: input and output must be the SAME interface, and
+            // the input-capable one owns that choice.
+            self.settings.input_device.clone()
+        } else {
+            self.default_out.clone()
+        };
+        // The tuner's channel adopts 1 explicitly — a cold choice is
+        // a choice, so the row shows "channel 1*" rather than hiding
+        // behind a dash.
+        if self.settings.input_device.is_some() && self.settings.input_channel.is_none() {
+            self.settings.input_channel = Some(1);
+        }
         // The adopted devices are new stream truth: re-read with them
         // in hand, then adopt the device's stream defaults too.
         self.take_snapshot();
